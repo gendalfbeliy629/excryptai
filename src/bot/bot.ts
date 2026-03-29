@@ -17,6 +17,14 @@ export const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN, {
 */
 export const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 
+bot.telegram.getMe()
+  .then((me) => {
+    console.log("Bot connected as:", me.username);
+  })
+  .catch((err) => {
+    console.error("Telegram getMe error:", err);
+  });
+
 // команды
 bot.start(startHandler);
 
