@@ -1,38 +1,25 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.aiHandler = aiHandler;
+exports.registerAIHandler = registerAIHandler;
 const ai_service_1 = require("../../services/ai.service");
 const crypto_service_1 = require("../../services/crypto.service");
-async function aiHandler(ctx) {
-    try {
-        let prompt = '';
-        if (ctx.match) {
-            prompt = ctx.match[1];
+function registerAIHandler(bot) {
+    bot.command("ai", async (ctx) => {
+        try {
+            const prompt = ctx.message.text.replace("/ai", "").trim();
+            const match = prompt.match(/\b(BTC|ETH|SOL|XRP|BNB)\b/i);
+            const symbol = match ? match[1].toUpperCase() : "BTC";
+            const market = await (0, crypto_service_1.getCryptoPrice)(symbol);
+            const response = await (0, ai_service_1.askAI)(prompt, {
+                symbol: market.symbol,
+                price: market.price, // ✅ фикс
+            });
+            await ctx.reply(`🤖 ${response}`);
         }
-        else {
-            const text = ctx.message?.text || '';
-            if (text.startsWith('/'))
-                return;
-            prompt = text;
+        catch (e) {
+            console.error(e);
+            await ctx.reply("Ошибка AI");
         }
-        if (!prompt) {
-            return ctx.reply('Напиши: /ai твой вопрос');
-        }
-        // 🧠 определяем монету
-        const match = prompt.match(/\b(BTC|ETH|SOL|XRP|BNB)\b/i);
-        const symbol = match ? match[1].toUpperCase() : 'BTC';
-        // 💰 получаем реальную цену
-        const price = await (0, crypto_service_1.getCryptoPrice)(symbol);
-        // 🤖 передаём в AI
-        const response = await (0, ai_service_1.askAI)(prompt, {
-            symbol,
-            price,
-        });
-        await ctx.reply(`🤖 ${response}`);
-    }
-    catch (e) {
-        console.error(e);
-        ctx.reply('Ошибка AI');
-    }
+    });
 }
 //# sourceMappingURL=ai.js.map
