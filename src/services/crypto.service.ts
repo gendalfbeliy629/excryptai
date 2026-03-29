@@ -12,7 +12,16 @@ type CachedCoin = {
   symbol: string;
 };
 
+type PriceCacheEntry = {
+  data: PriceResult;
+  expiresAt: number;
+};
+
 const coinIdCache = new Map<string, CachedCoin>();
+const priceCache = new Map<string, PriceCacheEntry>();
+const inflightPriceRequests = new Map<string, Promise<PriceResult>>();
+
+const PRICE_TTL_MS = 60_000;
 
 const POPULAR_COINS: Record<string, CachedCoin> = {
   BTC: { id: "bitcoin", name: "Bitcoin", symbol: "BTC" },
@@ -31,20 +40,6 @@ const POPULAR_COINS: Record<string, CachedCoin> = {
   DOT: { id: "polkadot", name: "Polkadot", symbol: "DOT" },
   MATIC: { id: "matic-network", name: "Polygon", symbol: "MATIC" },
   LTC: { id: "litecoin", name: "Litecoin", symbol: "LTC" },
-  BCH: { id: "bitcoin-cash", name: "Bitcoin Cash", symbol: "BCH" },
-  UNI: { id: "uniswap", name: "Uniswap", symbol: "UNI" },
-  APT: { id: "aptos", name: "Aptos", symbol: "APT" },
-  ARB: { id: "arbitrum", name: "Arbitrum", symbol: "ARB" },
-  OP: { id: "optimism", name: "Optimism", symbol: "OP" },
-  SUI: { id: "sui", name: "Sui", symbol: "SUI" },
-  ATOM: { id: "cosmos", name: "Cosmos", symbol: "ATOM" },
-  ETC: { id: "ethereum-classic", name: "Ethereum Classic", symbol: "ETC" },
-  XLM: { id: "stellar", name: "Stellar", symbol: "XLM" },
-  HBAR: { id: "hedera-hashgraph", name: "Hedera", symbol: "HBAR" },
-  NEAR: { id: "near", name: "NEAR", symbol: "NEAR" },
-  ICP: { id: "internet-computer", name: "Internet Computer", symbol: "ICP" },
-  FIL: { id: "filecoin", name: "Filecoin", symbol: "FIL" },
-  INJ: { id: "injective-protocol", name: "Injective", symbol: "INJ" },
 };
 
 function normalizeSymbol(input: string): string {
@@ -68,7 +63,6 @@ async function searchCoin(symbol: string): Promise<CachedCoin | null> {
   });
 
   const coins = response.data?.coins ?? [];
-
   const exact =
     coins.find((c: any) => String(c.symbol).toUpperCase() === query) ?? coins[0];
 
@@ -87,32 +81,61 @@ async function searchCoin(symbol: string): Promise<CachedCoin | null> {
 }
 
 export async function getCryptoPrice(symbol: string): Promise<PriceResult> {
-  const coin = await searchCoin(symbol);
+  const normalized = normalizeSymbol(symbol);
 
-  if (!coin) {
-    throw new Error(`Coin not found: ${symbol}`);
+  const cached = priceCache.get(normalized);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
   }
 
-  const response = await axios.get(
-    "https://api.coingecko.com/api/v3/simple/price",
-    {
-      params: {
-        ids: coin.id,
-        vs_currencies: "usd",
-      },
-      timeout: 10000,
+  const inflight = inflightPriceRequests.get(normalized);
+  if (inflight) {
+    return inflight;
+  }
+
+  const requestPromise = (async () => {
+    const coin = await searchCoin(normalized);
+
+    if (!coin) {
+      throw new Error(`Coin not found: ${symbol}`);
     }
-  );
 
-  const price = response.data?.[coin.id]?.usd;
+    const response = await axios.get(
+      "https://api.coingecko.com/api/v3/simple/price",
+      {
+        params: {
+          ids: coin.id,
+          vs_currencies: "usd",
+        },
+        timeout: 10000,
+      }
+    );
 
-  if (typeof price !== "number") {
-    throw new Error(`Price not found for ${symbol}`);
+    const price = response.data?.[coin.id]?.usd;
+
+    if (typeof price !== "number") {
+      throw new Error(`Price not found for ${symbol}`);
+    }
+
+    const result: PriceResult = {
+      symbol: coin.symbol,
+      name: coin.name,
+      price,
+    };
+
+    priceCache.set(normalized, {
+      data: result,
+      expiresAt: Date.now() + PRICE_TTL_MS,
+    });
+
+    return result;
+  })();
+
+  inflightPriceRequests.set(normalized, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    inflightPriceRequests.delete(normalized);
   }
-
-  return {
-    symbol: coin.symbol,
-    name: coin.name,
-    price,
-  };
 }

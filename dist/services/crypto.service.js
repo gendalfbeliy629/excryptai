@@ -6,6 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCryptoPrice = getCryptoPrice;
 const axios_1 = __importDefault(require("axios"));
 const coinIdCache = new Map();
+const priceCache = new Map();
+const inflightPriceRequests = new Map();
+const PRICE_TTL_MS = 60000;
 const POPULAR_COINS = {
     BTC: { id: "bitcoin", name: "Bitcoin", symbol: "BTC" },
     ETH: { id: "ethereum", name: "Ethereum", symbol: "ETH" },
@@ -23,20 +26,6 @@ const POPULAR_COINS = {
     DOT: { id: "polkadot", name: "Polkadot", symbol: "DOT" },
     MATIC: { id: "matic-network", name: "Polygon", symbol: "MATIC" },
     LTC: { id: "litecoin", name: "Litecoin", symbol: "LTC" },
-    BCH: { id: "bitcoin-cash", name: "Bitcoin Cash", symbol: "BCH" },
-    UNI: { id: "uniswap", name: "Uniswap", symbol: "UNI" },
-    APT: { id: "aptos", name: "Aptos", symbol: "APT" },
-    ARB: { id: "arbitrum", name: "Arbitrum", symbol: "ARB" },
-    OP: { id: "optimism", name: "Optimism", symbol: "OP" },
-    SUI: { id: "sui", name: "Sui", symbol: "SUI" },
-    ATOM: { id: "cosmos", name: "Cosmos", symbol: "ATOM" },
-    ETC: { id: "ethereum-classic", name: "Ethereum Classic", symbol: "ETC" },
-    XLM: { id: "stellar", name: "Stellar", symbol: "XLM" },
-    HBAR: { id: "hedera-hashgraph", name: "Hedera", symbol: "HBAR" },
-    NEAR: { id: "near", name: "NEAR", symbol: "NEAR" },
-    ICP: { id: "internet-computer", name: "Internet Computer", symbol: "ICP" },
-    FIL: { id: "filecoin", name: "Filecoin", symbol: "FIL" },
-    INJ: { id: "injective-protocol", name: "Injective", symbol: "INJ" },
 };
 function normalizeSymbol(input) {
     return input.trim().toUpperCase().replace(/USDT$|USD$/i, "");
@@ -67,25 +56,48 @@ async function searchCoin(symbol) {
     return found;
 }
 async function getCryptoPrice(symbol) {
-    const coin = await searchCoin(symbol);
-    if (!coin) {
-        throw new Error(`Coin not found: ${symbol}`);
+    const normalized = normalizeSymbol(symbol);
+    const cached = priceCache.get(normalized);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.data;
     }
-    const response = await axios_1.default.get("https://api.coingecko.com/api/v3/simple/price", {
-        params: {
-            ids: coin.id,
-            vs_currencies: "usd",
-        },
-        timeout: 10000,
-    });
-    const price = response.data?.[coin.id]?.usd;
-    if (typeof price !== "number") {
-        throw new Error(`Price not found for ${symbol}`);
+    const inflight = inflightPriceRequests.get(normalized);
+    if (inflight) {
+        return inflight;
     }
-    return {
-        symbol: coin.symbol,
-        name: coin.name,
-        price,
-    };
+    const requestPromise = (async () => {
+        const coin = await searchCoin(normalized);
+        if (!coin) {
+            throw new Error(`Coin not found: ${symbol}`);
+        }
+        const response = await axios_1.default.get("https://api.coingecko.com/api/v3/simple/price", {
+            params: {
+                ids: coin.id,
+                vs_currencies: "usd",
+            },
+            timeout: 10000,
+        });
+        const price = response.data?.[coin.id]?.usd;
+        if (typeof price !== "number") {
+            throw new Error(`Price not found for ${symbol}`);
+        }
+        const result = {
+            symbol: coin.symbol,
+            name: coin.name,
+            price,
+        };
+        priceCache.set(normalized, {
+            data: result,
+            expiresAt: Date.now() + PRICE_TTL_MS,
+        });
+        return result;
+    })();
+    inflightPriceRequests.set(normalized, requestPromise);
+    try {
+        return await requestPromise;
+    }
+    finally {
+        inflightPriceRequests.delete(normalized);
+    }
 }
 //# sourceMappingURL=crypto.service.js.map

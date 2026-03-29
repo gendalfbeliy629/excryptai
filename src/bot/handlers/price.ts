@@ -10,20 +10,19 @@ export function registerPriceHandler(bot: Telegraf) {
 
       const data = await getCryptoPrice(symbol);
 
-      await ctx.reply(
-        `💰 ${data.name} (${data.symbol})\nЦена: $${data.price}`
-      );
+      await ctx.reply(`💰 ${data.name} (${data.symbol})\nЦена: $${data.price}`);
     } catch (error: any) {
       console.error("Price command error:", error);
 
       if (axios.isAxiosError(error) && error.response?.status === 429) {
+        const retryAfter = error.response.headers?.["retry-after"];
         await ctx.reply(
-          "⏳ API цен временно перегружен. Попробуй через минуту."
+          `⏳ CoinGecko временно ограничил запросы. Попробуй позже${retryAfter ? ` (примерно через ${retryAfter} сек.)` : ""}.`
         );
         return;
       }
 
-      await ctx.reply("❌ Не удалось получить цену. Проверь тикер, например: /price BTC");
+      await ctx.reply("❌ Не удалось получить цену. Пример: /price BTC");
     }
   });
 }

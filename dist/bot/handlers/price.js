@@ -17,10 +17,11 @@ function registerPriceHandler(bot) {
         catch (error) {
             console.error("Price command error:", error);
             if (axios_1.default.isAxiosError(error) && error.response?.status === 429) {
-                await ctx.reply("⏳ API цен временно перегружен. Попробуй через минуту.");
+                const retryAfter = error.response.headers?.["retry-after"];
+                await ctx.reply(`⏳ CoinGecko временно ограничил запросы. Попробуй позже${retryAfter ? ` (примерно через ${retryAfter} сек.)` : ""}.`);
                 return;
             }
-            await ctx.reply("❌ Не удалось получить цену. Проверь тикер, например: /price BTC");
+            await ctx.reply("❌ Не удалось получить цену. Пример: /price BTC");
         }
     });
 }

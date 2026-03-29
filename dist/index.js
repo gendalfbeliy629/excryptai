@@ -10,11 +10,9 @@ app.get("/", (_req, res) => {
     res.send("Crypto AI bot is running 🚀");
 });
 const PORT = Number(process.env.PORT) || 3000;
-// 🔥 СРАЗУ открываем порт
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
 });
-// 🔥 бот запускаем отдельно
 (async () => {
     try {
         const me = await bot_1.bot.telegram.getMe();
