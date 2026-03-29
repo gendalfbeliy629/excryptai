@@ -1,12 +1,7 @@
-import { Context } from 'telegraf';
+import { Telegraf } from "telegraf";
 
-
-export const startHandler = async (ctx: Context) => {
-  await ctx.reply(`
-🚀 Crypto AI Bot
-
-Команды:
-/price BTC
-/ai По какой цене сегодня нужно покупать и продавать BTC?
-`);
+export function registerStartHandler(bot: Telegraf) {
+  bot.start((ctx) => {
+    ctx.reply("🚀 Бот работает!");
+  });
 }

@@ -1,10 +1,10 @@
 import { Telegraf } from "telegraf";
-import { startHandler } from "./start";
-import { priceHandler } from "./price";
-import { aiHandler } from "./ai";
+import { registerStartHandler } from "./start";
+import { registerPriceHandler } from "./price";
+import { registerAIHandler } from "./ai";
 
 export function registerHandlers(bot: Telegraf) {
-  bot.start((ctx) => startHandler(ctx));
-  bot.on('message', (ctx) => priceHandler(ctx));
-  aiHandler(bot);
+  registerStartHandler(bot);
+  registerPriceHandler(bot);
+  registerAIHandler(bot);
 }

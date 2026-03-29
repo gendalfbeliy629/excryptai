@@ -1,38 +1,11 @@
 import { Telegraf } from "telegraf";
-//import { HttpsProxyAgent } from "https-proxy-agent";
 import { config } from "../config/env";
+import { registerStartHandler } from "./handlers/start";
+import { registerPriceHandler } from "./handlers/price";
+import { registerAIHandler } from "./handlers/ai";
 
-import { startHandler } from './handlers/start';
-import { priceHandler } from './handlers/price';
-import { aiHandler } from './handlers/ai';
-
-//const agent = new HttpsProxyAgent("http://192.168.0.199:8080");
-
-/*
-export const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN, {
-  telegram: {
-    agent: agent as any
-  }
-});
-*/
 export const bot = new Telegraf(config.TELEGRAM_BOT_TOKEN);
 
-bot.telegram.getMe()
-  .then((me) => {
-    console.log("Bot connected as:", me.username);
-  })
-  .catch((err) => {
-    console.error("Telegram getMe error:", err);
-  });
-
-// команды
-bot.start(startHandler);
-
-// ВАЖНО: с аргументами
-bot.hears(/^\/price (.+)/, priceHandler);
-
-// AI (например любой текст)
-bot.hears(/^\/ai (.+)/, aiHandler);
-bot.on('text', aiHandler);
-
-
+registerStartHandler(bot);
+registerPriceHandler(bot);
+registerAIHandler(bot);

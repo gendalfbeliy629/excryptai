@@ -1,16 +1,20 @@
-import { Context } from "telegraf";
+import { Telegraf } from "telegraf";
 import { getCryptoPrice } from "../../services/crypto.service";
 
-export const priceHandler = async (ctx: Context) => {
-  try {
-    const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
-    const symbol = text.split(" ")[1] || "BTC";
+export function registerPriceHandler(bot: Telegraf) {
+  bot.command("price", async (ctx) => {
+    try {
+      const text = ctx.message.text.trim();
+      const symbol = text.split(" ")[1] || "BTC";
 
-    const price = await getCryptoPrice(symbol.toUpperCase());
+      const data = await getCryptoPrice(symbol);
 
-    await ctx.reply(`💰 ${symbol.toUpperCase()} = $${price}`);
-  } catch (error) {
-    console.error(error);
-    await ctx.reply("❌ Ошибка получения цены");
-  }
-};
+      await ctx.reply(
+        `💰 ${data.name} (${data.symbol})\nЦена: $${data.price}`
+      );
+    } catch (err) {
+      console.error(err);
+      await ctx.reply("❌ Монета не найдена или ошибка API");
+    }
+  });
+}
