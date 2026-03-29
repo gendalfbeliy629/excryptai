@@ -1,63 +1,99 @@
 import axios from "axios";
 
-type Coin = {
-  id: string;
+type PriceResult = {
   symbol: string;
   name: string;
+  price: number;
 };
 
-let coinsCache: Coin[] = [];
-let lastUpdate = 0;
+type CachedCoin = {
+  id: string;
+  name: string;
+  symbol: string;
+};
 
-const CACHE_TTL = 1000 * 60 * 60; // 1 час
+const coinIdCache = new Map<string, CachedCoin>();
 
-// 🔥 загрузка всех монет
-async function loadCoins(): Promise<Coin[]> {
-  const now = Date.now();
+const POPULAR_COINS: Record<string, CachedCoin> = {
+  BTC: { id: "bitcoin", name: "Bitcoin", symbol: "BTC" },
+  ETH: { id: "ethereum", name: "Ethereum", symbol: "ETH" },
+  SOL: { id: "solana", name: "Solana", symbol: "SOL" },
+  XRP: { id: "ripple", name: "XRP", symbol: "XRP" },
+  BNB: { id: "binancecoin", name: "BNB", symbol: "BNB" },
+  ADA: { id: "cardano", name: "Cardano", symbol: "ADA" },
+  DOGE: { id: "dogecoin", name: "Dogecoin", symbol: "DOGE" },
+  TON: { id: "the-open-network", name: "Toncoin", symbol: "TON" },
+  TRX: { id: "tron", name: "TRON", symbol: "TRX" },
+  AVAX: { id: "avalanche-2", name: "Avalanche", symbol: "AVAX" },
+  SHIB: { id: "shiba-inu", name: "Shiba Inu", symbol: "SHIB" },
+  PEPE: { id: "pepe", name: "Pepe", symbol: "PEPE" },
+  LINK: { id: "chainlink", name: "Chainlink", symbol: "LINK" },
+  DOT: { id: "polkadot", name: "Polkadot", symbol: "DOT" },
+  MATIC: { id: "matic-network", name: "Polygon", symbol: "MATIC" },
+  LTC: { id: "litecoin", name: "Litecoin", symbol: "LTC" },
+  BCH: { id: "bitcoin-cash", name: "Bitcoin Cash", symbol: "BCH" },
+  UNI: { id: "uniswap", name: "Uniswap", symbol: "UNI" },
+  APT: { id: "aptos", name: "Aptos", symbol: "APT" },
+  ARB: { id: "arbitrum", name: "Arbitrum", symbol: "ARB" },
+  OP: { id: "optimism", name: "Optimism", symbol: "OP" },
+  SUI: { id: "sui", name: "Sui", symbol: "SUI" },
+  ATOM: { id: "cosmos", name: "Cosmos", symbol: "ATOM" },
+  ETC: { id: "ethereum-classic", name: "Ethereum Classic", symbol: "ETC" },
+  XLM: { id: "stellar", name: "Stellar", symbol: "XLM" },
+  HBAR: { id: "hedera-hashgraph", name: "Hedera", symbol: "HBAR" },
+  NEAR: { id: "near", name: "NEAR", symbol: "NEAR" },
+  ICP: { id: "internet-computer", name: "Internet Computer", symbol: "ICP" },
+  FIL: { id: "filecoin", name: "Filecoin", symbol: "FIL" },
+  INJ: { id: "injective-protocol", name: "Injective", symbol: "INJ" },
+};
 
-  if (coinsCache.length && now - lastUpdate < CACHE_TTL) {
-    return coinsCache;
+function normalizeSymbol(input: string): string {
+  return input.trim().toUpperCase().replace(/USDT$|USD$/i, "");
+}
+
+async function searchCoin(symbol: string): Promise<CachedCoin | null> {
+  const query = normalizeSymbol(symbol);
+
+  if (POPULAR_COINS[query]) {
+    return POPULAR_COINS[query];
   }
 
-  console.log("Loading coins list from CoinGecko...");
+  if (coinIdCache.has(query)) {
+    return coinIdCache.get(query)!;
+  }
 
-  const res = await axios.get(
-    "https://api.coingecko.com/api/v3/coins/list",
-    { timeout: 15000 }
-  );
+  const response = await axios.get("https://api.coingecko.com/api/v3/search", {
+    params: { query },
+    timeout: 10000,
+  });
 
-  coinsCache = res.data;
-  lastUpdate = now;
+  const coins = response.data?.coins ?? [];
 
-  console.log(`Loaded ${coinsCache.length} coins`);
+  const exact =
+    coins.find((c: any) => String(c.symbol).toUpperCase() === query) ?? coins[0];
 
-  return coinsCache;
+  if (!exact) {
+    return null;
+  }
+
+  const found: CachedCoin = {
+    id: exact.id,
+    name: exact.name,
+    symbol: String(exact.symbol).toUpperCase(),
+  };
+
+  coinIdCache.set(query, found);
+  return found;
 }
 
-// 🔍 поиск монеты
-function findCoin(symbol: string, coins: Coin[]): Coin | undefined {
-  const clean = symbol.toLowerCase().replace("usdt", "");
-
-  // точное совпадение
-  let coin = coins.find((c) => c.symbol === clean);
-
-  if (coin) return coin;
-
-  // fallback — частичное совпадение
-  return coins.find((c) => c.symbol.includes(clean));
-}
-
-// 💰 получение цены
-export async function getCryptoPrice(symbol: string) {
-  const coins = await loadCoins();
-
-  const coin = findCoin(symbol, coins);
+export async function getCryptoPrice(symbol: string): Promise<PriceResult> {
+  const coin = await searchCoin(symbol);
 
   if (!coin) {
     throw new Error(`Coin not found: ${symbol}`);
   }
 
-  const res = await axios.get(
+  const response = await axios.get(
     "https://api.coingecko.com/api/v3/simple/price",
     {
       params: {
@@ -68,14 +104,14 @@ export async function getCryptoPrice(symbol: string) {
     }
   );
 
-  const price = res.data?.[coin.id]?.usd;
+  const price = response.data?.[coin.id]?.usd;
 
-  if (!price) {
+  if (typeof price !== "number") {
     throw new Error(`Price not found for ${symbol}`);
   }
 
   return {
-    symbol: coin.symbol.toUpperCase(),
+    symbol: coin.symbol,
     name: coin.name,
     price,
   };
