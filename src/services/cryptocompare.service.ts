@@ -12,6 +12,15 @@ export type Candle = {
   volumeTo: number;
 };
 
+export type PairPrice = {
+  fromSymbol: string;
+  toSymbol: string;
+  price: number;
+  change24h: number | null;
+  high24h: number | null;
+  low24h: number | null;
+};
+
 function buildHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
 
@@ -20,6 +29,10 @@ function buildHeaders(): Record<string, string> {
   }
 
   return headers;
+}
+
+function normalizeQuoteSymbol(input: string): string {
+  return input.trim().toUpperCase().replace(/\//g, "");
 }
 
 function mapRows(rows: any[]): Candle[] {
@@ -34,18 +47,58 @@ function mapRows(rows: any[]): Candle[] {
   }));
 }
 
+export async function getPairPrice(
+  baseSymbolInput: string,
+  quoteSymbolInput = "USDT"
+): Promise<PairPrice> {
+  const fromSymbol = normalizeSymbol(baseSymbolInput);
+  const toSymbol = normalizeQuoteSymbol(quoteSymbolInput);
+
+  const response = await axios.get(
+    "https://min-api.cryptocompare.com/data/pricemultifull",
+    {
+      params: {
+        fsyms: fromSymbol,
+        tsyms: toSymbol,
+      },
+      headers: buildHeaders(),
+      timeout: 10000,
+    }
+  );
+
+  const raw = response.data?.RAW?.[fromSymbol]?.[toSymbol];
+
+  if (!raw) {
+    throw new Error(
+      `CryptoCompare returned empty pair price for ${fromSymbol}/${toSymbol}`
+    );
+  }
+
+  return {
+    fromSymbol,
+    toSymbol,
+    price: Number(raw.PRICE),
+    change24h:
+      typeof raw.CHANGEPCT24HOUR === "number" ? raw.CHANGEPCT24HOUR : null,
+    high24h: typeof raw.HIGH24HOUR === "number" ? raw.HIGH24HOUR : null,
+    low24h: typeof raw.LOW24HOUR === "number" ? raw.LOW24HOUR : null,
+  };
+}
+
 export async function getHourlyOHLC(
   symbolInput: string,
-  limit = 24
+  limit = 24,
+  quoteSymbolInput = "USDT"
 ): Promise<Candle[]> {
   const symbol = normalizeSymbol(symbolInput);
+  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
   const response = await axios.get(
     "https://min-api.cryptocompare.com/data/v2/histohour",
     {
       params: {
         fsym: symbol,
-        tsym: "USD",
+        tsym: quoteSymbol,
         limit,
       },
       headers: buildHeaders(),
@@ -56,7 +109,9 @@ export async function getHourlyOHLC(
   const rows = response.data?.Data?.Data;
 
   if (!Array.isArray(rows)) {
-    throw new Error(`CryptoCompare returned invalid hourly OHLC for ${symbol}`);
+    throw new Error(
+      `CryptoCompare returned invalid hourly OHLC for ${symbol}/${quoteSymbol}`
+    );
   }
 
   return mapRows(rows);
@@ -64,16 +119,18 @@ export async function getHourlyOHLC(
 
 export async function getDailyOHLC(
   symbolInput: string,
-  limit = 30
+  limit = 30,
+  quoteSymbolInput = "USDT"
 ): Promise<Candle[]> {
   const symbol = normalizeSymbol(symbolInput);
+  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
   const response = await axios.get(
     "https://min-api.cryptocompare.com/data/v2/histoday",
     {
       params: {
         fsym: symbol,
-        tsym: "USD",
+        tsym: quoteSymbol,
         limit,
       },
       headers: buildHeaders(),
@@ -84,7 +141,9 @@ export async function getDailyOHLC(
   const rows = response.data?.Data?.Data;
 
   if (!Array.isArray(rows)) {
-    throw new Error(`CryptoCompare returned invalid daily OHLC for ${symbol}`);
+    throw new Error(
+      `CryptoCompare returned invalid daily OHLC for ${symbol}/${quoteSymbol}`
+    );
   }
 
   return mapRows(rows);

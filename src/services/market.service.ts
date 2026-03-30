@@ -1,5 +1,5 @@
 import { getSpotPrice } from "./coincap.service";
-import { getDailyOHLC } from "./cryptocompare.service";
+import { getDailyOHLC, getPairPrice } from "./cryptocompare.service";
 import { getLiquiditySnapshot } from "./defillama.service";
 import { getSentimentSnapshot } from "./santiment.service";
 import { normalizeSymbol } from "../utils/symbols";
@@ -26,11 +26,22 @@ export type OHLCItem = {
 
 export type TrendType = "BULLISH" | "BEARISH" | "SIDEWAYS";
 
+export type ParsedPair = {
+  baseSymbol: string;
+  quoteSymbol: string;
+  displayPair: string;
+};
+
 export type MarketContext = {
   asset: {
     symbol: string;
     name: string;
     id: string | null;
+  };
+  pair: {
+    baseSymbol: string;
+    quoteSymbol: string;
+    display: string;
   };
   spot: {
     priceUsd: number;
@@ -57,6 +68,50 @@ export type MarketContext = {
     socialDominanceLatest: number | null;
   };
 };
+
+function normalizeQuoteSymbol(input: string): string {
+  return input.trim().toUpperCase().replace(/\//g, "");
+}
+
+export function parseMarketPair(rawInput?: string): ParsedPair {
+  const input = (rawInput || "BTC/USDT").trim().toUpperCase();
+
+  if (!input) {
+    return {
+      baseSymbol: "BTC",
+      quoteSymbol: "USDT",
+      displayPair: "BTC/USDT",
+    };
+  }
+
+  if (input.includes("/")) {
+    const [baseRaw, quoteRaw] = input.split("/");
+    const baseSymbol = normalizeSymbol(baseRaw || "");
+    const quoteSymbol = normalizeQuoteSymbol(quoteRaw || "");
+
+    if (!baseSymbol || !quoteSymbol) {
+      throw new Error("INVALID_PAIR_FORMAT");
+    }
+
+    return {
+      baseSymbol,
+      quoteSymbol,
+      displayPair: `${baseSymbol}/${quoteSymbol}`,
+    };
+  }
+
+  const baseSymbol = normalizeSymbol(input);
+
+  if (!baseSymbol) {
+    throw new Error("INVALID_PAIR_FORMAT");
+  }
+
+  return {
+    baseSymbol,
+    quoteSymbol: "USDT",
+    displayPair: `${baseSymbol}/USDT`,
+  };
+}
 
 function calculateRSI(closes: number[], period = 14): number | null {
   if (closes.length <= period) return null;
@@ -147,9 +202,14 @@ export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
 
 export async function getOHLC(
   symbolInput: string,
-  limit = 30
+  limit = 30,
+  quoteSymbolInput = "USDT"
 ): Promise<OHLCItem[]> {
-  const candles = await getDailyOHLC(symbolInput, Math.max(limit, 30));
+  const candles = await getDailyOHLC(
+    symbolInput,
+    Math.max(limit, 30),
+    quoteSymbolInput
+  );
 
   return candles.map((row) => ({
     time: row.time,
@@ -163,15 +223,18 @@ export async function getOHLC(
 }
 
 export async function buildMarketContext(
-  symbolInput: string
+  symbolInput: string,
+  quoteSymbolInput = "USDT"
 ): Promise<MarketContext> {
-  const symbol = normalizeSymbol(symbolInput);
+  const baseSymbol = normalizeSymbol(symbolInput);
+  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const [spot, candles, liquidity, sentiment] = await Promise.all([
-    getSpotPrice(symbol),
-    getOHLC(symbol, 30),
-    getLiquiditySnapshot(symbol),
-    getSentimentSnapshot(symbol),
+  const [assetSpot, pairSpot, candles, liquidity, sentiment] = await Promise.all([
+    getSpotPrice(baseSymbol),
+    getPairPrice(baseSymbol, quoteSymbol),
+    getOHLC(baseSymbol, 30, quoteSymbol),
+    getLiquiditySnapshot(baseSymbol),
+    getSentimentSnapshot(baseSymbol),
   ]);
 
   const highs = candles.map((c) => c.high).filter((v) => Number.isFinite(v));
@@ -188,14 +251,19 @@ export async function buildMarketContext(
 
   return {
     asset: {
-      symbol: spot.symbol,
-      name: spot.name,
-      id: spot.id,
+      symbol: assetSpot.symbol,
+      name: assetSpot.name,
+      id: assetSpot.id,
+    },
+    pair: {
+      baseSymbol,
+      quoteSymbol,
+      display: `${baseSymbol}/${quoteSymbol}`,
     },
     spot: {
-      priceUsd: spot.priceUsd,
-      change24h: spot.changePercent24Hr,
-      marketCapUsd: spot.marketCapUsd,
+      priceUsd: pairSpot.price,
+      change24h: pairSpot.change24h,
+      marketCapUsd: assetSpot.marketCapUsd,
     },
     technicals: {
       period: "30d",
@@ -217,6 +285,10 @@ export async function getMarketData(symbol: string) {
   return getCoinInfo(symbol);
 }
 
-export async function getCandles(symbol: string, limit = 30) {
-  return getOHLC(symbol, limit);
+export async function getCandles(
+  symbol: string,
+  limit = 30,
+  quoteSymbolInput = "USDT"
+) {
+  return getOHLC(symbol, limit, quoteSymbolInput);
 }

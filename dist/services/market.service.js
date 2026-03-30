@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseMarketPair = parseMarketPair;
 exports.getCoinInfo = getCoinInfo;
 exports.getOHLC = getOHLC;
 exports.buildMarketContext = buildMarketContext;
@@ -10,6 +11,41 @@ const cryptocompare_service_1 = require("./cryptocompare.service");
 const defillama_service_1 = require("./defillama.service");
 const santiment_service_1 = require("./santiment.service");
 const symbols_1 = require("../utils/symbols");
+function normalizeQuoteSymbol(input) {
+    return input.trim().toUpperCase().replace(/\//g, "");
+}
+function parseMarketPair(rawInput) {
+    const input = (rawInput || "BTC/USDT").trim().toUpperCase();
+    if (!input) {
+        return {
+            baseSymbol: "BTC",
+            quoteSymbol: "USDT",
+            displayPair: "BTC/USDT",
+        };
+    }
+    if (input.includes("/")) {
+        const [baseRaw, quoteRaw] = input.split("/");
+        const baseSymbol = (0, symbols_1.normalizeSymbol)(baseRaw || "");
+        const quoteSymbol = normalizeQuoteSymbol(quoteRaw || "");
+        if (!baseSymbol || !quoteSymbol) {
+            throw new Error("INVALID_PAIR_FORMAT");
+        }
+        return {
+            baseSymbol,
+            quoteSymbol,
+            displayPair: `${baseSymbol}/${quoteSymbol}`,
+        };
+    }
+    const baseSymbol = (0, symbols_1.normalizeSymbol)(input);
+    if (!baseSymbol) {
+        throw new Error("INVALID_PAIR_FORMAT");
+    }
+    return {
+        baseSymbol,
+        quoteSymbol: "USDT",
+        displayPair: `${baseSymbol}/USDT`,
+    };
+}
 function calculateRSI(closes, period = 14) {
     if (closes.length <= period)
         return null;
@@ -79,8 +115,8 @@ async function getCoinInfo(symbolInput) {
         source: "CoinCap",
     };
 }
-async function getOHLC(symbolInput, limit = 30) {
-    const candles = await (0, cryptocompare_service_1.getDailyOHLC)(symbolInput, Math.max(limit, 30));
+async function getOHLC(symbolInput, limit = 30, quoteSymbolInput = "USDT") {
+    const candles = await (0, cryptocompare_service_1.getDailyOHLC)(symbolInput, Math.max(limit, 30), quoteSymbolInput);
     return candles.map((row) => ({
         time: row.time,
         open: row.open,
@@ -91,13 +127,15 @@ async function getOHLC(symbolInput, limit = 30) {
         volumeTo: row.volumeTo,
     }));
 }
-async function buildMarketContext(symbolInput) {
-    const symbol = (0, symbols_1.normalizeSymbol)(symbolInput);
-    const [spot, candles, liquidity, sentiment] = await Promise.all([
-        (0, coincap_service_1.getSpotPrice)(symbol),
-        getOHLC(symbol, 30),
-        (0, defillama_service_1.getLiquiditySnapshot)(symbol),
-        (0, santiment_service_1.getSentimentSnapshot)(symbol),
+async function buildMarketContext(symbolInput, quoteSymbolInput = "USDT") {
+    const baseSymbol = (0, symbols_1.normalizeSymbol)(symbolInput);
+    const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
+    const [assetSpot, pairSpot, candles, liquidity, sentiment] = await Promise.all([
+        (0, coincap_service_1.getSpotPrice)(baseSymbol),
+        (0, cryptocompare_service_1.getPairPrice)(baseSymbol, quoteSymbol),
+        getOHLC(baseSymbol, 30, quoteSymbol),
+        (0, defillama_service_1.getLiquiditySnapshot)(baseSymbol),
+        (0, santiment_service_1.getSentimentSnapshot)(baseSymbol),
     ]);
     const highs = candles.map((c) => c.high).filter((v) => Number.isFinite(v));
     const lows = candles.map((c) => c.low).filter((v) => Number.isFinite(v));
@@ -110,14 +148,19 @@ async function buildMarketContext(symbolInput) {
     const trend30d = detectTrend(closes, sma7, sma30);
     return {
         asset: {
-            symbol: spot.symbol,
-            name: spot.name,
-            id: spot.id,
+            symbol: assetSpot.symbol,
+            name: assetSpot.name,
+            id: assetSpot.id,
+        },
+        pair: {
+            baseSymbol,
+            quoteSymbol,
+            display: `${baseSymbol}/${quoteSymbol}`,
         },
         spot: {
-            priceUsd: spot.priceUsd,
-            change24h: spot.changePercent24Hr,
-            marketCapUsd: spot.marketCapUsd,
+            priceUsd: pairSpot.price,
+            change24h: pairSpot.change24h,
+            marketCapUsd: assetSpot.marketCapUsd,
         },
         technicals: {
             period: "30d",
@@ -137,7 +180,7 @@ async function buildMarketContext(symbolInput) {
 async function getMarketData(symbol) {
     return getCoinInfo(symbol);
 }
-async function getCandles(symbol, limit = 30) {
-    return getOHLC(symbol, limit);
+async function getCandles(symbol, limit = 30, quoteSymbolInput = "USDT") {
+    return getOHLC(symbol, limit, quoteSymbolInput);
 }
 //# sourceMappingURL=market.service.js.map
