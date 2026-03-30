@@ -9,6 +9,7 @@ export function registerStartHandler(bot: Telegraf) {
         "Доступные команды:",
         "/price BTC — контекст: текущая цена и метрики",
         "/ai BTC — AI-анализ на основе данных за 30 дней",
+        "/buy — top-10 кандидатов к покупке по горизонту 1 месяц",
       ].join("\n")
     );
   });
