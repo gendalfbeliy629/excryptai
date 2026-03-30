@@ -1,6 +1,5 @@
 import { Telegraf } from "telegraf";
-import axios from "axios";
-import { getCryptoPrice } from "../../services/crypto.service";
+import { buildMarketContext } from "../../services/market.service";
 
 export function registerPriceHandler(bot: Telegraf) {
   bot.command("price", async (ctx) => {
@@ -8,21 +7,24 @@ export function registerPriceHandler(bot: Telegraf) {
       const text = ctx.message.text.trim();
       const symbol = text.split(" ")[1] || "BTC";
 
-      const data = await getCryptoPrice(symbol);
+      const market = await buildMarketContext(symbol);
 
-      await ctx.reply(`💰 ${data.name} (${data.symbol})\nЦена: $${data.price}`);
-    } catch (error: any) {
-      console.error("Price command error:", error);
+      const lines = [
+        `💰 ${market.asset.name} (${market.asset.symbol})`,
+        `Цена: $${market.spot.priceUsd.toFixed(4)}`,
+        `Изменение 24ч: ${market.spot.change24h?.toFixed(2) ?? "n/a"}%`,
+        `High 24ч: ${market.technicals.high24h?.toFixed(4) ?? "n/a"}`,
+        `Low 24ч: ${market.technicals.low24h?.toFixed(4) ?? "n/a"}`,
+        `RSI(14): ${market.technicals.rsi14?.toFixed(2) ?? "n/a"}`,
+        `TVL/ликвидность: ${market.liquidity.totalTvlUsd ? `$${market.liquidity.totalTvlUsd.toFixed(0)}` : "n/a"}`,
+        `Social Volume: ${market.sentiment.socialVolumeTotal ?? "n/a"}`,
+        `Social Dominance: ${market.sentiment.socialDominanceLatest ?? "n/a"}`,
+      ];
 
-      if (axios.isAxiosError(error) && error.response?.status === 429) {
-        const retryAfter = error.response.headers?.["retry-after"];
-        await ctx.reply(
-          `⏳ CoinGecko временно ограничил запросы. Попробуй позже${retryAfter ? ` (примерно через ${retryAfter} сек.)` : ""}.`
-        );
-        return;
-      }
-
-      await ctx.reply("❌ Не удалось получить цену. Пример: /price BTC");
+      await ctx.reply(lines.join("\n"));
+    } catch (error) {
+      console.error("Price handler error:", error);
+      await ctx.reply("❌ Не удалось получить market data. Пример: /price BTC");
     }
   });
 }

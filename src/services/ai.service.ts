@@ -1,62 +1,48 @@
 import Groq from "groq-sdk";
+import { env } from "../config/env";
+import { MarketContext } from "./market.service";
 
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
+  apiKey: env.GROQ_API_KEY,
 });
 
-type MarketData = {
-  symbol: string;
-  price: number;
-};
+export async function askAI(question: string, market: MarketContext): Promise<string> {
+  const response = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    temperature: 0.3,
+    messages: [
+      {
+        role: "system",
+        content: `
+Ты SENIOR CRYPTO MARKET ANALYST.
+Отвечай только на русском языке.
 
-export const askAI = async (
-  message: string,
-  market?: MarketData
-) => {
-  try {
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        {
-          role: "system",
-          content: `
-You are a SENIOR CRYPTO MARKET ANALYST.
+Правила:
+- Не выдумывай цены и метрики.
+- Используй только переданный market context.
+- Если данных недостаточно, скажи это прямо.
+- Дай четкий итог: BUY / SELL / HOLD.
+- Обязательно объясни риски.
+        `.trim(),
+      },
+      {
+        role: "user",
+        content: `
+Вопрос пользователя:
+${question}
 
-IMPORTANT LANGUAGE RULE:
-- Always respond ONLY in Russian language
-- Never use English unless user explicitly requests it
+Контекст рынка:
+${JSON.stringify(market, null, 2)}
 
-Rules:
-- Use real market data if provided
-- Never guess prices
-- Focus on technical analysis
-- Give clear signal: BUY / SELL / HOLD
-- Explain risk in 1-2 lines
-- No hype, no speculation without data
-- Be precise, structured, and professional
-          `,
-        },
-        {
-          role: "user",
-          content: `
-Answer ONLY in Russian language.
+Сформируй ответ в структуре:
+1. Краткий вывод
+2. Сигнал: BUY / SELL / HOLD
+3. Обоснование
+4. Риски
+        `.trim(),
+      },
+    ],
+  });
 
-Market Data:
-- Symbol: ${market?.symbol || "UNKNOWN"}
-- Current Price: ${market?.price ?? "NO DATA"}
-
-User Question:
-${message}
-
-Provide trading analysis in Russian.
-          `,
-        },
-      ],
-    });
-
-    return response.choices[0]?.message?.content || "Нет ответа";
-  } catch (error) {
-    console.error(error);
-    return "❌ AI ошибка";
-  }
-};
+  return response.choices[0]?.message?.content ?? "AI не смог подготовить ответ.";
+}

@@ -1,27 +1,29 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerPriceHandler = registerPriceHandler;
-const axios_1 = __importDefault(require("axios"));
-const crypto_service_1 = require("../../services/crypto.service");
+const market_service_1 = require("../../services/market.service");
 function registerPriceHandler(bot) {
     bot.command("price", async (ctx) => {
         try {
             const text = ctx.message.text.trim();
             const symbol = text.split(" ")[1] || "BTC";
-            const data = await (0, crypto_service_1.getCryptoPrice)(symbol);
-            await ctx.reply(`💰 ${data.name} (${data.symbol})\nЦена: $${data.price}`);
+            const market = await (0, market_service_1.buildMarketContext)(symbol);
+            const lines = [
+                `💰 ${market.asset.name} (${market.asset.symbol})`,
+                `Цена: $${market.spot.priceUsd.toFixed(4)}`,
+                `Изменение 24ч: ${market.spot.change24h?.toFixed(2) ?? "n/a"}%`,
+                `High 24ч: ${market.technicals.high24h?.toFixed(4) ?? "n/a"}`,
+                `Low 24ч: ${market.technicals.low24h?.toFixed(4) ?? "n/a"}`,
+                `RSI(14): ${market.technicals.rsi14?.toFixed(2) ?? "n/a"}`,
+                `TVL/ликвидность: ${market.liquidity.totalTvlUsd ? `$${market.liquidity.totalTvlUsd.toFixed(0)}` : "n/a"}`,
+                `Social Volume: ${market.sentiment.socialVolumeTotal ?? "n/a"}`,
+                `Social Dominance: ${market.sentiment.socialDominanceLatest ?? "n/a"}`,
+            ];
+            await ctx.reply(lines.join("\n"));
         }
         catch (error) {
-            console.error("Price command error:", error);
-            if (axios_1.default.isAxiosError(error) && error.response?.status === 429) {
-                const retryAfter = error.response.headers?.["retry-after"];
-                await ctx.reply(`⏳ CoinGecko временно ограничил запросы. Попробуй позже${retryAfter ? ` (примерно через ${retryAfter} сек.)` : ""}.`);
-                return;
-            }
-            await ctx.reply("❌ Не удалось получить цену. Пример: /price BTC");
+            console.error("Price handler error:", error);
+            await ctx.reply("❌ Не удалось получить market data. Пример: /price BTC");
         }
     });
 }

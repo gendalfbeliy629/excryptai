@@ -1,26 +1,31 @@
 import { Telegraf } from "telegraf";
+import { buildMarketContext } from "../../services/market.service";
 import { askAI } from "../../services/ai.service";
-import { getCryptoPrice } from "../../services/crypto.service";
+
+const SUPPORTED_SYMBOLS = [
+  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "TON", "TRX", "AVAX",
+  "SHIB", "PEPE", "LINK", "DOT", "LTC", "BCH", "UNI", "ATOM", "NEAR",
+  "APT", "ARB", "OP", "SUI", "ETC", "XLM", "FIL", "ICP", "HBAR", "INJ",
+];
 
 export function registerAIHandler(bot: Telegraf) {
   bot.command("ai", async (ctx) => {
     try {
-      const prompt = ctx.message.text.replace("/ai", "").trim();
+      const prompt = ctx.message.text.replace("/ai", "").trim() || "Сделай анализ BTC";
 
-      const match = prompt.match(/\b(BTC|ETH|SOL|XRP|BNB)\b/i);
-      const symbol = match ? match[1].toUpperCase() : "BTC";
+      const match = prompt.match(
+        new RegExp(`\\b(${SUPPORTED_SYMBOLS.join("|")})\\b`, "i")
+      );
 
-      const market = await getCryptoPrice(symbol);
+      const symbol = match?.[1]?.toUpperCase() || "BTC";
 
-      const response = await askAI(prompt, {
-        symbol: market.symbol,
-        price: market.price, // ✅ фикс
-      });
+      const market = await buildMarketContext(symbol);
+      const answer = await askAI(prompt, market);
 
-      await ctx.reply(`🤖 ${response}`);
-    } catch (e) {
-      console.error(e);
-      await ctx.reply("Ошибка AI");
+      await ctx.reply(answer);
+    } catch (error) {
+      console.error("AI handler error:", error);
+      await ctx.reply("❌ Не удалось сделать AI-анализ.");
     }
   });
 }

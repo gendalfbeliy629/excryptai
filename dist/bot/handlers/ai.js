@@ -1,24 +1,26 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerAIHandler = registerAIHandler;
+const market_service_1 = require("../../services/market.service");
 const ai_service_1 = require("../../services/ai.service");
-const crypto_service_1 = require("../../services/crypto.service");
+const SUPPORTED_SYMBOLS = [
+    "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "TON", "TRX", "AVAX",
+    "SHIB", "PEPE", "LINK", "DOT", "LTC", "BCH", "UNI", "ATOM", "NEAR",
+    "APT", "ARB", "OP", "SUI", "ETC", "XLM", "FIL", "ICP", "HBAR", "INJ",
+];
 function registerAIHandler(bot) {
     bot.command("ai", async (ctx) => {
         try {
-            const prompt = ctx.message.text.replace("/ai", "").trim();
-            const match = prompt.match(/\b(BTC|ETH|SOL|XRP|BNB)\b/i);
-            const symbol = match ? match[1].toUpperCase() : "BTC";
-            const market = await (0, crypto_service_1.getCryptoPrice)(symbol);
-            const response = await (0, ai_service_1.askAI)(prompt, {
-                symbol: market.symbol,
-                price: market.price, // ✅ фикс
-            });
-            await ctx.reply(`🤖 ${response}`);
+            const prompt = ctx.message.text.replace("/ai", "").trim() || "Сделай анализ BTC";
+            const match = prompt.match(new RegExp(`\\b(${SUPPORTED_SYMBOLS.join("|")})\\b`, "i"));
+            const symbol = match?.[1]?.toUpperCase() || "BTC";
+            const market = await (0, market_service_1.buildMarketContext)(symbol);
+            const answer = await (0, ai_service_1.askAI)(prompt, market);
+            await ctx.reply(answer);
         }
-        catch (e) {
-            console.error(e);
-            await ctx.reply("Ошибка AI");
+        catch (error) {
+            console.error("AI handler error:", error);
+            await ctx.reply("❌ Не удалось сделать AI-анализ.");
         }
     });
 }

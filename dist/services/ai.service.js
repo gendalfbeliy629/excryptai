@@ -3,58 +3,49 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.askAI = void 0;
-const groq_sdk_1 = __importDefault(require("groq-sdk"));
-const groq = new groq_sdk_1.default({
-    apiKey: process.env.GROQ_API_KEY,
-});
-const askAI = async (message, market) => {
-    try {
-        const response = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-                {
-                    role: "system",
-                    content: `
-You are a SENIOR CRYPTO MARKET ANALYST.
-
-IMPORTANT LANGUAGE RULE:
-- Always respond ONLY in Russian language
-- Never use English unless user explicitly requests it
-
-Rules:
-- Use real market data if provided
-- Never guess prices
-- Focus on technical analysis
-- Give clear signal: BUY / SELL / HOLD
-- Explain risk in 1-2 lines
-- No hype, no speculation without data
-- Be precise, structured, and professional
-          `,
-                },
-                {
-                    role: "user",
-                    content: `
-Answer ONLY in Russian language.
-
-Market Data:
-- Symbol: ${market?.symbol || "UNKNOWN"}
-- Current Price: ${market?.price ?? "NO DATA"}
-
-User Question:
-${message}
-
-Provide trading analysis in Russian.
-          `,
-                },
-            ],
-        });
-        return response.choices[0]?.message?.content || "Нет ответа";
-    }
-    catch (error) {
-        console.error(error);
-        return "❌ AI ошибка";
-    }
-};
 exports.askAI = askAI;
+const groq_sdk_1 = __importDefault(require("groq-sdk"));
+const env_1 = require("../config/env");
+const groq = new groq_sdk_1.default({
+    apiKey: env_1.env.GROQ_API_KEY,
+});
+async function askAI(question, market) {
+    const response = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        temperature: 0.3,
+        messages: [
+            {
+                role: "system",
+                content: `
+Ты SENIOR CRYPTO MARKET ANALYST.
+Отвечай только на русском языке.
+
+Правила:
+- Не выдумывай цены и метрики.
+- Используй только переданный market context.
+- Если данных недостаточно, скажи это прямо.
+- Дай четкий итог: BUY / SELL / HOLD.
+- Обязательно объясни риски.
+        `.trim(),
+            },
+            {
+                role: "user",
+                content: `
+Вопрос пользователя:
+${question}
+
+Контекст рынка:
+${JSON.stringify(market, null, 2)}
+
+Сформируй ответ в структуре:
+1. Краткий вывод
+2. Сигнал: BUY / SELL / HOLD
+3. Обоснование
+4. Риски
+        `.trim(),
+            },
+        ],
+    });
+    return response.choices[0]?.message?.content ?? "AI не смог подготовить ответ.";
+}
 //# sourceMappingURL=ai.service.js.map
