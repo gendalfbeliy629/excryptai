@@ -12,32 +12,17 @@ export type Candle = {
   volumeTo: number;
 };
 
-export async function getHourlyOHLC(symbolInput: string, limit = 24): Promise<Candle[]> {
-  const symbol = normalizeSymbol(symbolInput);
-
+function buildHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
+
   if (env.CRYPTOCOMPARE_API_KEY) {
     headers.authorization = `Apikey ${env.CRYPTOCOMPARE_API_KEY}`;
   }
 
-  const response = await axios.get(
-    "https://min-api.cryptocompare.com/data/v2/histohour",
-    {
-      params: {
-        fsym: symbol,
-        tsym: "USD",
-        limit,
-      },
-      headers,
-      timeout: 10000,
-    }
-  );
+  return headers;
+}
 
-  const rows = response.data?.Data?.Data;
-  if (!Array.isArray(rows)) {
-    throw new Error(`CryptoCompare returned invalid OHLC for ${symbol}`);
-  }
-
+function mapRows(rows: any[]): Candle[] {
   return rows.map((row: any) => ({
     time: Number(row.time),
     open: Number(row.open),
@@ -47,4 +32,60 @@ export async function getHourlyOHLC(symbolInput: string, limit = 24): Promise<Ca
     volumeFrom: Number(row.volumefrom),
     volumeTo: Number(row.volumeto),
   }));
+}
+
+export async function getHourlyOHLC(
+  symbolInput: string,
+  limit = 24
+): Promise<Candle[]> {
+  const symbol = normalizeSymbol(symbolInput);
+
+  const response = await axios.get(
+    "https://min-api.cryptocompare.com/data/v2/histohour",
+    {
+      params: {
+        fsym: symbol,
+        tsym: "USD",
+        limit,
+      },
+      headers: buildHeaders(),
+      timeout: 10000,
+    }
+  );
+
+  const rows = response.data?.Data?.Data;
+
+  if (!Array.isArray(rows)) {
+    throw new Error(`CryptoCompare returned invalid hourly OHLC for ${symbol}`);
+  }
+
+  return mapRows(rows);
+}
+
+export async function getDailyOHLC(
+  symbolInput: string,
+  limit = 30
+): Promise<Candle[]> {
+  const symbol = normalizeSymbol(symbolInput);
+
+  const response = await axios.get(
+    "https://min-api.cryptocompare.com/data/v2/histoday",
+    {
+      params: {
+        fsym: symbol,
+        tsym: "USD",
+        limit,
+      },
+      headers: buildHeaders(),
+      timeout: 10000,
+    }
+  );
+
+  const rows = response.data?.Data?.Data;
+
+  if (!Array.isArray(rows)) {
+    throw new Error(`CryptoCompare returned invalid daily OHLC for ${symbol}`);
+  }
+
+  return mapRows(rows);
 }

@@ -7,9 +7,8 @@ function registerStartHandler(bot) {
             "Привет! Я crypto-AI bot 🚀",
             "",
             "Доступные команды:",
-            "/price BTC",
-            "/price ETH",
-            "/ai Сделай анализ BTC",
+            "/price BTC — контекст: текущая цена и метрики",
+            "/ai BTC — AI-анализ на основе данных за 30 дней",
         ].join("\n"));
     });
 }

@@ -36,6 +36,37 @@ function calculateRSI(closes, period = 14) {
     const rs = avgGain / avgLoss;
     return 100 - 100 / (1 + rs);
 }
+function calculateSMA(values, period) {
+    if (values.length < period)
+        return null;
+    const slice = values.slice(values.length - period);
+    const sum = slice.reduce((acc, value) => acc + value, 0);
+    return sum / period;
+}
+function calculatePercentChange(start, end) {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0) {
+        return null;
+    }
+    return ((end - start) / start) * 100;
+}
+function detectTrend(closes, sma7, sma30) {
+    if (closes.length < 7 || sma7 === null || sma30 === null) {
+        return "SIDEWAYS";
+    }
+    const lastClose = closes[closes.length - 1];
+    const firstClose = closes[0];
+    const change = calculatePercentChange(firstClose, lastClose);
+    if (change === null) {
+        return "SIDEWAYS";
+    }
+    if (sma7 > sma30 && change > 3) {
+        return "BULLISH";
+    }
+    if (sma7 < sma30 && change < -3) {
+        return "BEARISH";
+    }
+    return "SIDEWAYS";
+}
 async function getCoinInfo(symbolInput) {
     const spot = await (0, coincap_service_1.getSpotPrice)(symbolInput);
     return {
@@ -49,7 +80,7 @@ async function getCoinInfo(symbolInput) {
     };
 }
 async function getOHLC(symbolInput, limit = 30) {
-    const candles = await (0, cryptocompare_service_1.getHourlyOHLC)(symbolInput, Math.max(limit, 15));
+    const candles = await (0, cryptocompare_service_1.getDailyOHLC)(symbolInput, Math.max(limit, 30));
     return candles.map((row) => ({
         time: row.time,
         open: row.open,
@@ -64,13 +95,19 @@ async function buildMarketContext(symbolInput) {
     const symbol = (0, symbols_1.normalizeSymbol)(symbolInput);
     const [spot, candles, liquidity, sentiment] = await Promise.all([
         (0, coincap_service_1.getSpotPrice)(symbol),
-        getOHLC(symbol, 24),
+        getOHLC(symbol, 30),
         (0, defillama_service_1.getLiquiditySnapshot)(symbol),
         (0, santiment_service_1.getSentimentSnapshot)(symbol),
     ]);
     const highs = candles.map((c) => c.high).filter((v) => Number.isFinite(v));
     const lows = candles.map((c) => c.low).filter((v) => Number.isFinite(v));
     const closes = candles.map((c) => c.close).filter((v) => Number.isFinite(v));
+    const firstClose = closes[0];
+    const lastClose = closes[closes.length - 1];
+    const sma7 = calculateSMA(closes, 7);
+    const sma30 = calculateSMA(closes, 30);
+    const change30d = calculatePercentChange(firstClose, lastClose);
+    const trend30d = detectTrend(closes, sma7, sma30);
     return {
         asset: {
             symbol: spot.symbol,
@@ -83,9 +120,14 @@ async function buildMarketContext(symbolInput) {
             marketCapUsd: spot.marketCapUsd,
         },
         technicals: {
-            high24h: highs.length ? Math.max(...highs) : null,
-            low24h: lows.length ? Math.min(...lows) : null,
+            period: "30d",
+            high30d: highs.length ? Math.max(...highs) : null,
+            low30d: lows.length ? Math.min(...lows) : null,
+            change30d,
             rsi14: calculateRSI(closes, 14),
+            sma7,
+            sma30,
+            trend30d,
             candles,
         },
         liquidity,

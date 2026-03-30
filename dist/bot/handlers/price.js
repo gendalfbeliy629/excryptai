@@ -12,10 +12,16 @@ function registerPriceHandler(bot) {
                 `💰 ${market.asset.name} (${market.asset.symbol})`,
                 `Цена: $${market.spot.priceUsd.toFixed(4)}`,
                 `Изменение 24ч: ${market.spot.change24h?.toFixed(2) ?? "n/a"}%`,
-                `High 24ч: ${market.technicals.high24h?.toFixed(4) ?? "n/a"}`,
-                `Low 24ч: ${market.technicals.low24h?.toFixed(4) ?? "n/a"}`,
+                `Изменение 30д: ${market.technicals.change30d?.toFixed(2) ?? "n/a"}%`,
+                `Тренд 30д: ${market.technicals.trend30d}`,
+                `High 30д: ${market.technicals.high30d?.toFixed(4) ?? "n/a"}`,
+                `Low 30д: ${market.technicals.low30d?.toFixed(4) ?? "n/a"}`,
+                `SMA 7: ${market.technicals.sma7?.toFixed(4) ?? "n/a"}`,
+                `SMA 30: ${market.technicals.sma30?.toFixed(4) ?? "n/a"}`,
                 `RSI(14): ${market.technicals.rsi14?.toFixed(2) ?? "n/a"}`,
-                `TVL/ликвидность: ${market.liquidity.totalTvlUsd ? `$${market.liquidity.totalTvlUsd.toFixed(0)}` : "n/a"}`,
+                `TVL/ликвидность: ${market.liquidity.totalTvlUsd
+                    ? `$${market.liquidity.totalTvlUsd.toFixed(0)}`
+                    : "n/a"}`,
                 `Social Volume: ${market.sentiment.socialVolumeTotal ?? "n/a"}`,
                 `Social Dominance: ${market.sentiment.socialDominanceLatest ?? "n/a"}`,
             ];
