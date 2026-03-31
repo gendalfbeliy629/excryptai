@@ -7,9 +7,11 @@ const start_1 = require("./handlers/start");
 const price_1 = require("./handlers/price");
 const ai_1 = require("./handlers/ai");
 const buy_1 = require("./handlers/buy");
+const info_1 = require("./handlers/info");
 exports.bot = new telegraf_1.Telegraf(env_1.env.TELEGRAM_BOT_TOKEN);
 (0, start_1.registerStartHandler)(exports.bot);
 (0, price_1.registerPriceHandler)(exports.bot);
 (0, ai_1.registerAIHandler)(exports.bot);
 (0, buy_1.registerBuyHandler)(exports.bot);
+(0, info_1.registerInfoHandler)(exports.bot);
 //# sourceMappingURL=bot.js.map
