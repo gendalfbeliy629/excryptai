@@ -17,16 +17,42 @@ function formatPercent(value) {
     const sign = value > 0 ? "+" : "";
     return `${sign}${value.toFixed(2)}%`;
 }
+function formatNullable(value, digits = 2) {
+    if (value === null || !Number.isFinite(value))
+        return "n/a";
+    return value.toFixed(digits);
+}
 function registerBuyHandler(bot) {
     bot.command("buy", async (ctx) => {
         try {
-            await ctx.reply("Считаю top-10 кандидатов к покупке по горизонту 1 месяц...");
-            const pairs = await (0, buy_service_1.getTopBuyPairs)(10);
-            if (!pairs.length) {
-                await ctx.reply("❌ Не удалось подобрать пары. Попробуй позже.");
+            await ctx.reply("Сканирую рынок и ищу только пары с подтвержденным сигналом BUY на горизонте 1 месяц...");
+            const result = await (0, buy_service_1.getBuyScanResult)(10);
+            if (!result.buys.length) {
+                const message = [
+                    "⚪ Сейчас покупать нечего.",
+                    "",
+                    "Что происходит на рынке:",
+                    `- Проверено монет: ${result.summary.totalChecked}`,
+                    `- BUY: ${result.summary.buyCount}`,
+                    `- HOLD: ${result.summary.holdCount}`,
+                    `- SELL: ${result.summary.sellCount}`,
+                    `- BULLISH: ${result.summary.bullishCount}`,
+                    `- SIDEWAYS: ${result.summary.sidewaysCount}`,
+                    `- BEARISH: ${result.summary.bearishCount}`,
+                    `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
+                    `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
+                    "",
+                    `Почему сейчас нет BUY: ${result.summary.explanation}`,
+                    "",
+                    "Логика:",
+                    "- /buy показывает только deterministic signal = BUY",
+                    "- HOLD и SELL в список не попадают",
+                    "- если ни одна монета не прошла фильтры, бот сообщает, что точек входа сейчас нет",
+                ].join("\n");
+                await ctx.reply(message);
                 return;
             }
-            const lines = pairs.map((item) => [
+            const lines = result.buys.map((item) => [
                 `${item.rank}. ${item.pair} — ${item.signal}`,
                 `Цена: ${formatPrice(item.priceUsd)}`,
                 `30д: ${formatPercent(item.change30d)} | 24ч: ${formatPercent(item.change24h)}`,
@@ -35,11 +61,13 @@ function registerBuyHandler(bot) {
                 `Почему: ${item.reason}`,
             ].join("\n"));
             const message = [
-                "🟢 Top-10 выгодных к покупке пар",
+                "🟢 Пары с подтвержденным сигналом BUY",
                 "",
                 "Логика отбора:",
                 "- главный горизонт: 1 месяц",
-                "- учитываются trend 30d, change 30d, RSI, положение цены в диапазоне 30д, SMA30, ликвидность и sentiment",
+                "- в выдачу попадают только пары с deterministic signal = BUY",
+                "- HOLD и SELL скрываются",
+                "- учитываются trend 30d, change 30d, RSI, диапазон 30д, SMA30, ликвидность и sentiment",
                 "- список не является финансовой рекомендацией",
                 "",
                 ...lines,

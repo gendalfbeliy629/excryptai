@@ -1,279 +1,145 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getTopBuyPairs = getTopBuyPairs;
+exports.getBuyScanResult = getBuyScanResult;
 const market_service_1 = require("./market.service");
+const signal_service_1 = require("./signal.service");
 const symbols_1 = require("../utils/symbols");
 const CANDIDATE_SYMBOLS = Object.keys(symbols_1.SYMBOL_TO_COINCAP_ID);
-function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-}
-function round(value) {
-    return Number(value.toFixed(2));
-}
-function getRangePosition(price, low, high) {
-    if (low === null ||
-        high === null ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(high) ||
-        high <= low) {
-        return null;
-    }
-    const pos = ((price - low) / (high - low)) * 100;
-    return clamp(pos, 0, 100);
-}
-function getPullbackFromHigh(price, high) {
-    if (high === null ||
-        !Number.isFinite(high) ||
-        high <= 0 ||
-        price <= 0) {
-        return null;
-    }
-    return ((high - price) / high) * 100;
-}
-function scoreTrend(trend) {
-    if (trend === "BULLISH")
-        return 25;
-    if (trend === "SIDEWAYS")
-        return 10;
-    return -20;
-}
-function scoreChange30d(change30d) {
-    if (change30d === null || !Number.isFinite(change30d))
-        return 0;
-    if (change30d >= 5 && change30d <= 25)
-        return 22;
-    if (change30d > 25 && change30d <= 40)
-        return 15;
-    if (change30d >= 0 && change30d < 5)
-        return 10;
-    if (change30d > -5 && change30d < 0)
-        return 2;
-    if (change30d < -20)
-        return -18;
-    return -8;
-}
-function scoreRsi(rsi) {
-    if (rsi === null || !Number.isFinite(rsi))
-        return 0;
-    if (rsi >= 48 && rsi <= 62)
-        return 18;
-    if (rsi > 62 && rsi <= 68)
-        return 10;
-    if (rsi >= 40 && rsi < 48)
-        return 8;
-    if (rsi > 68 && rsi <= 75)
-        return -6;
-    if (rsi < 35)
-        return -4;
-    return 0;
-}
-function scoreRangePosition(position) {
-    if (position === null || !Number.isFinite(position))
-        return 0;
-    if (position >= 35 && position <= 65)
-        return 16;
-    if (position > 65 && position <= 80)
-        return 8;
-    if (position >= 20 && position < 35)
-        return 10;
-    if (position > 80)
-        return -10;
-    if (position < 15)
-        return -6;
-    return 0;
-}
-function scorePullback(pullbackFromHigh) {
-    if (pullbackFromHigh === null ||
-        !Number.isFinite(pullbackFromHigh)) {
-        return 0;
-    }
-    if (pullbackFromHigh >= 4 && pullbackFromHigh <= 15)
-        return 10;
-    if (pullbackFromHigh > 15 && pullbackFromHigh <= 25)
-        return 4;
-    if (pullbackFromHigh >= 0 && pullbackFromHigh < 4)
-        return -6;
-    if (pullbackFromHigh > 30)
-        return -8;
-    return 0;
-}
-function scoreSmaPosition(price, sma30) {
-    if (sma30 === null || !Number.isFinite(sma30) || sma30 <= 0)
-        return 0;
-    if (price > sma30)
-        return 10;
-    if (price === sma30)
-        return 2;
-    return -10;
-}
-function scoreLiquidity(totalTvlUsd) {
-    if (totalTvlUsd === null || !Number.isFinite(totalTvlUsd) || totalTvlUsd <= 0) {
-        return 0;
-    }
-    if (totalTvlUsd >= 10000000000)
-        return 10;
-    if (totalTvlUsd >= 1000000000)
-        return 8;
-    if (totalTvlUsd >= 100000000)
-        return 5;
-    return 2;
-}
-function scoreSentiment(socialVolumeTotal, socialDominanceLatest) {
-    let score = 0;
-    if (socialVolumeTotal !== null &&
-        Number.isFinite(socialVolumeTotal) &&
-        socialVolumeTotal > 0) {
-        score += 3;
-    }
-    if (socialDominanceLatest !== null &&
-        Number.isFinite(socialDominanceLatest) &&
-        socialDominanceLatest > 0) {
-        score += 2;
-    }
-    return score;
-}
-function buildReason(params) {
-    const parts = [];
-    if (params.trend30d === "BULLISH") {
-        parts.push("бычий тренд за 30 дней");
-    }
-    else if (params.trend30d === "SIDEWAYS") {
-        parts.push("нейтральный тренд без сильной слабости");
-    }
-    if (params.change30d !== null) {
-        if (params.change30d >= 5 && params.change30d <= 25) {
-            parts.push("здоровый рост за месяц");
-        }
-        else if (params.change30d > 25) {
-            parts.push("сильный месячный импульс");
-        }
-    }
-    if (params.rsi14 !== null) {
-        if (params.rsi14 >= 48 && params.rsi14 <= 62) {
-            parts.push("RSI в комфортной зоне");
-        }
-        else if (params.rsi14 > 62 && params.rsi14 <= 68) {
-            parts.push("RSI сильный, но ещё не критичный");
-        }
-    }
-    if (params.rangePosition !== null) {
-        if (params.rangePosition >= 35 && params.rangePosition <= 65) {
-            parts.push("цена в средней части диапазона 30д");
-        }
-        else if (params.rangePosition > 65 && params.rangePosition <= 80) {
-            parts.push("цена выше середины диапазона");
-        }
-    }
-    if (params.pullbackFromHigh !== null &&
-        params.pullbackFromHigh >= 4 &&
-        params.pullbackFromHigh <= 15) {
-        parts.push("есть умеренный откат от high 30д");
-    }
-    if (params.totalTvlUsd !== null &&
-        Number.isFinite(params.totalTvlUsd) &&
-        params.totalTvlUsd > 0) {
-        parts.push("есть подтверждение ликвидностью");
-    }
-    return parts.length
-        ? parts.join(", ")
-        : "кандидат отобран по суммарному скорингу за 30 дней";
-}
-function buildSignal(score, trend30d) {
-    if (score >= 55 && trend30d !== "BEARISH") {
-        return "BUY";
-    }
-    return "HOLD";
-}
-function scoreCandidate(market) {
-    const priceUsd = market.spot.priceUsd;
-    const change24h = market.spot.change24h;
-    const change30d = market.technicals.change30d;
-    const trend30d = market.technicals.trend30d;
-    const rsi14 = market.technicals.rsi14;
-    const high30d = market.technicals.high30d;
-    const low30d = market.technicals.low30d;
-    const sma30 = market.technicals.sma30;
-    if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
-        return null;
-    }
-    const rangePosition = getRangePosition(priceUsd, low30d, high30d);
-    const pullbackFromHigh = getPullbackFromHigh(priceUsd, high30d);
-    let score = 0;
-    score += scoreTrend(trend30d);
-    score += scoreChange30d(change30d);
-    score += scoreRsi(rsi14);
-    score += scoreRangePosition(rangePosition);
-    score += scorePullback(pullbackFromHigh);
-    score += scoreSmaPosition(priceUsd, sma30);
-    score += scoreLiquidity(market.liquidity.totalTvlUsd);
-    score += scoreSentiment(market.sentiment.socialVolumeTotal, market.sentiment.socialDominanceLatest);
-    if (change24h !== null &&
-        Number.isFinite(change24h) &&
-        change24h < -8) {
-        score -= 8;
-    }
-    if (change24h !== null &&
-        Number.isFinite(change24h) &&
-        change24h > 10) {
-        score -= 4;
-    }
-    const finalScore = round(score);
-    const signal = buildSignal(finalScore, trend30d);
-    if (trend30d === "BEARISH" && finalScore < 50) {
-        return null;
-    }
-    return {
-        pair: `${market.asset.symbol}/USDT`,
-        symbol: market.asset.symbol,
-        name: market.asset.name,
-        priceUsd,
-        change24h,
-        change30d,
-        trend30d,
-        rsi14,
-        score: finalScore,
-        signal,
-        reason: buildReason({
-            trend30d,
-            change30d,
-            rsi14,
-            rangePosition,
-            pullbackFromHigh,
-            totalTvlUsd: market.liquidity.totalTvlUsd,
-        }),
-    };
-}
 async function mapWithConcurrency(items, concurrency, worker) {
     const results = [];
     let currentIndex = 0;
     async function run() {
         while (currentIndex < items.length) {
             const index = currentIndex++;
-            const result = await worker(items[index]);
-            results[index] = result;
+            results[index] = await worker(items[index]);
         }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => run()));
     return results;
 }
-async function getTopBuyPairs(limit = 10) {
-    const scored = await mapWithConcurrency(CANDIDATE_SYMBOLS, 4, async (symbol) => {
+function average(values) {
+    const filtered = values.filter((value) => value !== null && Number.isFinite(value));
+    if (!filtered.length) {
+        return null;
+    }
+    const sum = filtered.reduce((acc, value) => acc + value, 0);
+    return sum / filtered.length;
+}
+function buildNoBuyExplanation(summary) {
+    const reasons = [];
+    if (summary.buyCount > 0) {
+        return "На рынке есть пары с подтвержденным сигналом BUY.";
+    }
+    if (summary.sidewaysCount >= summary.bullishCount &&
+        summary.sidewaysCount >= summary.bearishCount) {
+        reasons.push("по большинству монет рынок сейчас боковой");
+    }
+    if (summary.bearishCount > summary.bullishCount) {
+        reasons.push("медвежьих сценариев больше, чем бычьих");
+    }
+    if (summary.avgChange30d !== null &&
+        Number.isFinite(summary.avgChange30d) &&
+        summary.avgChange30d < 5) {
+        reasons.push("средний импульс за 30 дней слишком слабый для уверенного BUY");
+    }
+    if (summary.avgRsi14 !== null &&
+        Number.isFinite(summary.avgRsi14) &&
+        summary.avgRsi14 > 65) {
+        reasons.push("часть рынка выглядит перегретой по RSI");
+    }
+    if (summary.avgRsi14 !== null &&
+        Number.isFinite(summary.avgRsi14) &&
+        summary.avgRsi14 >= 45 &&
+        summary.avgRsi14 <= 60 &&
+        summary.sidewaysCount >= summary.bullishCount) {
+        reasons.push("RSI в среднем нейтральный, но без сильного трендового подтверждения");
+    }
+    if (!reasons.length) {
+        reasons.push("сейчас нет монет, которые одновременно проходят фильтры по тренду, месячному импульсу, RSI и положению относительно SMA30");
+    }
+    return reasons.join(", ");
+}
+function toSummary(items) {
+    const buyCount = items.filter((item) => item.signal === "BUY").length;
+    const holdCount = items.filter((item) => item.signal === "HOLD").length;
+    const sellCount = items.filter((item) => item.signal === "SELL").length;
+    const bullishCount = items.filter((item) => item.trend30d === "BULLISH").length;
+    const sidewaysCount = items.filter((item) => item.trend30d === "SIDEWAYS").length;
+    const bearishCount = items.filter((item) => item.trend30d === "BEARISH").length;
+    const avgChange30d = average(items.map((item) => item.change30d));
+    const avgRsi14 = average(items.map((item) => item.rsi14));
+    return {
+        totalChecked: items.length,
+        buyCount,
+        holdCount,
+        sellCount,
+        bullishCount,
+        sidewaysCount,
+        bearishCount,
+        avgChange30d,
+        avgRsi14,
+        explanation: buildNoBuyExplanation({
+            buyCount,
+            holdCount,
+            sellCount,
+            bullishCount,
+            sidewaysCount,
+            bearishCount,
+            avgChange30d,
+            avgRsi14,
+        }),
+    };
+}
+async function getBuyScanResult(limit = 10) {
+    const evaluated = await mapWithConcurrency(CANDIDATE_SYMBOLS, 4, async (symbol) => {
         try {
             const market = await (0, market_service_1.buildMarketContext)(symbol);
-            return scoreCandidate(market);
+            const evaluation = (0, signal_service_1.evaluateMarketSignal)(market);
+            if (!evaluation) {
+                return null;
+            }
+            return {
+                pair: evaluation.pair,
+                symbol: evaluation.symbol,
+                name: evaluation.name,
+                priceUsd: evaluation.priceUsd,
+                change24h: evaluation.change24h,
+                change30d: evaluation.change30d,
+                trend30d: evaluation.trend30d,
+                rsi14: evaluation.rsi14,
+                score: evaluation.score,
+                signal: evaluation.signal,
+                reason: evaluation.reason,
+            };
         }
         catch (error) {
-            console.error(`Buy scoring failed for ${symbol}:`, error);
+            console.error(`Buy scan failed for ${symbol}:`, error);
             return null;
         }
     });
-    return scored
-        .filter((item) => item !== null)
+    const validItems = evaluated.filter((item) => item !== null);
+    const summary = toSummary(validItems);
+    const buys = validItems
+        .filter((item) => item.signal === "BUY")
         .sort((a, b) => b.score - a.score)
         .slice(0, limit)
         .map((item, index) => ({
         rank: index + 1,
-        ...item,
+        pair: item.pair,
+        symbol: item.symbol,
+        name: item.name,
+        priceUsd: item.priceUsd,
+        change24h: item.change24h,
+        change30d: item.change30d,
+        trend30d: item.trend30d,
+        rsi14: item.rsi14,
+        score: item.score,
+        signal: "BUY",
+        reason: item.reason,
     }));
+    return {
+        buys,
+        summary,
+    };
 }
 //# sourceMappingURL=buy.service.js.map
