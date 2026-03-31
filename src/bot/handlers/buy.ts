@@ -38,6 +38,7 @@ function buildBuyCard(item: BuyCandidate): string {
     }`,
     `Score: ${item.score.toFixed(2)}`,
     `Почему: ${item.reason}`,
+    `|----------------------|`,
     `Как сопровождать сделку:\n${managementText}`,
   ].join("\n");
 }

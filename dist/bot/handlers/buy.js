@@ -38,6 +38,7 @@ function buildBuyCard(item) {
         `Тренд 30д: ${item.trend30d} | RSI: ${item.rsi14 !== null ? item.rsi14.toFixed(2) : "n/a"}`,
         `Score: ${item.score.toFixed(2)}`,
         `Почему: ${item.reason}`,
+        `|----------------------|`,
         `Как сопровождать сделку:\n${managementText}`,
     ].join("\n");
 }
