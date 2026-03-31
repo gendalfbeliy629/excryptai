@@ -282,7 +282,7 @@ function buildMiningInfo(details: CoinGeckoDetails, symbol: string): string {
 
   if (supplemental?.consensusType) {
     if (categories.includes("mineable") || hashing) {
-      return `Обычно добывается через майнинг. Механизм/тип сети: ${supplemental.consensusType}${hashing ? `, алгоритм: ${hashing}` : ""}.`;
+      return `Обычно добывается через майнинг.`;
     }
 
     return `Сеть работает через ${supplemental.consensusType}. Классический майнинг может отсутствовать.`;
@@ -421,10 +421,10 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
       blockReward: supplemental.blockReward || "нет надёжных данных",
       halving: supplemental.halving || "нет надёжных данных",
       consensusType: supplemental.consensusType || "нет надёжных данных",
+      miningInfo: buildMiningInfo(details, symbol),
     },
     discoveryAndUsage: {
       description,
-      miningInfo: buildMiningInfo(details, symbol),
       officialWallets: wallets.official,
       unofficialWallets: wallets.unofficial,
       exchanges,
@@ -463,6 +463,7 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
       halving: supplemental.halving || "нет надёжных данных",
       blockchainSize: supplemental.blockchainSize || "нет надёжных данных",
       consensusType: supplemental.consensusType || "нет надёжных данных",
+      miningInfo: buildMiningInfo(details, symbol),
       communityTwitter: formatNumber(details.community_data?.twitter_followers),
       communityReddit: formatNumber(details.community_data?.reddit_subscribers),
       communityTelegram: formatNumber(details.community_data?.telegram_channel_user_count),
@@ -496,8 +497,8 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
 🔹 <название> (<тикер>)
 
 1. История создания и цель
-2. Как добывается / как обеспечивается работа сети
-3. Ключевые характеристики
+2. Ключевые характеристики
+- как добывается
 - алгоритм / тип сети
 - алгоритм хеширования
 - дата запуска
@@ -515,22 +516,24 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
 - халвинг
 - ATH / ATL
 
-4. Кошельки
+3. Кошельки
 - официальные
 - неофициальные / популярные
 
-5. Где купить
-6. Где и как применяется
-7. Плюсы
-8. Минусы
-9. Текущий статус развития
-10. Дополнительно
+4. Где купить
+5. Где и как применяется
+6. Плюсы
+7. Минусы
+8. Текущий статус развития
+9. Дополнительно
 - сообщество
 - github / разработка
 - официальный сайт / explorer / repo
 
 Требования:
-- все поля: "Максимальная эмиссия", "Алгоритм хеширования", "Время формирования блока", "Текущая награда за блок", "Халвинг", "Капитализация" должны находиться именно в пункте 3 "Ключевые характеристики"
+- удали отдельный пункт "Как добывается / как обеспечивается работа сети"
+- поле "Как добывается" должно быть только внутри пункта 2 "Ключевые характеристики"
+- все поля: "Максимальная эмиссия", "Алгоритм хеширования", "Время формирования блока", "Текущая награда за блок", "Халвинг", "Капитализация" должны находиться именно в пункте 2 "Ключевые характеристики"
 - пиши кратко, по делу, в виде маркированных пунктов
 - не делай слишком длинные абзацы
 - если по награде за блок, халвингу или размеру блокчейна нет надёжных данных, так и напиши
@@ -556,10 +559,8 @@ ${JSON.stringify(promptPayload, null, 2)}
     "1. История создания и цель",
     `- ${description.slice(0, 700) || "нет надёжных данных"}`,
     "",
-    "2. Как добывается / как обеспечивается работа сети",
-    `- ${buildMiningInfo(details, symbol)}`,
-    "",
-    "3. Ключевые характеристики",
+    "2. Ключевые характеристики",
+    `- Как добывается: ${buildMiningInfo(details, symbol)}`,
     `- Алгоритм / тип сети: ${supplemental.consensusType || "нет надёжных данных"}`,
     `- Алгоритм хеширования: ${details.hashing_algorithm || "нет надёжных данных"}`,
     `- Дата запуска: ${details.genesis_date || "нет надёжных данных"}`,
@@ -578,11 +579,11 @@ ${JSON.stringify(promptPayload, null, 2)}
     `- ATH: ${formatUsd(details.market_data?.ath?.usd)} (${details.market_data?.ath_date?.usd || "нет надёжных данных"})`,
     `- ATL: ${formatUsd(details.market_data?.atl?.usd)} (${details.market_data?.atl_date?.usd || "нет надёжных данных"})`,
     "",
-    "4. Кошельки",
+    "3. Кошельки",
     `- Официальные: ${wallets.official.join(", ")}`,
     `- Популярные: ${wallets.unofficial.join(", ")}`,
     "",
-    "5. Где купить",
+    "4. Где купить",
     `- ${exchanges.join(", ") || "нет надёжных данных"}`,
   ].join("\n");
 }
