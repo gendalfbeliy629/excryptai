@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getMarkets } from "../../lib/api";
+import { safeGetMarkets } from "../../lib/api";
 import { formatPercent, formatPrice } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,36 @@ function signalClassName(signal: "BUY" | "HOLD" | "SELL") {
 }
 
 export default async function MarketsPage() {
-  const data = await getMarkets(16);
+  const result = await safeGetMarkets(16);
+
+  if (!result.data) {
+    return (
+      <>
+        <section className="hero">
+          <div className="hero-badge">Markets</div>
+          <h1 className="page-title">Рынок и текущие сигналы</h1>
+          <p className="page-subtitle">
+            Страница временно недоступна, но frontend больше не падает целиком.
+          </p>
+        </section>
+
+        <section className="section">
+          <div className="card error-card">
+            <h3>Не удалось загрузить markets</h3>
+            <p>Backend вернул ошибку при сборке списка активов.</p>
+            <p style={{ marginTop: 12 }}>
+              <strong>Причина:</strong> {result.error ?? "неизвестная ошибка"}
+            </p>
+            <p style={{ marginTop: 12 }}>
+              Попробуй обновить страницу через 10–20 секунд.
+            </p>
+          </div>
+        </section>
+      </>
+    );
+  }
+
+  const data = result.data;
 
   return (
     <>
@@ -23,6 +52,19 @@ export default async function MarketsPage() {
           CryptoCompare + deterministic signal engine.
         </p>
       </section>
+
+      {data.degraded ? (
+        <section className="section">
+          <div className="card warning-card">
+            <h3>Данные загружены частично</h3>
+            <p>
+              Один или несколько активов были пропущены из-за временной ошибки
+              внешнего провайдера. Таблица показана в частичном режиме вместо
+              500 ошибки.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       <section className="section">
         <div className="card table-wrap">

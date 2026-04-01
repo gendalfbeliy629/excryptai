@@ -69,11 +69,13 @@ export type DashboardData = {
     avgRsi14: number | null;
     explanation: string;
   };
+  degraded?: boolean;
 };
 
 export type MarketsResponse = {
   items: MarketListItem[];
   total: number;
+  degraded?: boolean;
 };
 
 export type MarketDetail = {
@@ -144,13 +146,29 @@ export type MarketDetail = {
   };
 };
 
+export type ApiResult<T> = {
+  data: T | null;
+  error: string | null;
+};
+
 async function fetchApi<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     cache: "no-store"
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+
+    try {
+      const payload = (await response.json()) as ApiEnvelope<T>;
+      if (payload?.error) {
+        errorMessage = payload.error;
+      }
+    } catch {
+      // ignore json parse failure
+    }
+
+    throw new Error(errorMessage);
   }
 
   const payload = (await response.json()) as ApiEnvelope<T>;
@@ -160,6 +178,21 @@ async function fetchApi<T>(path: string): Promise<T> {
   }
 
   return payload.data;
+}
+
+async function safeFetchApi<T>(path: string): Promise<ApiResult<T>> {
+  try {
+    const data = await fetchApi<T>(path);
+    return {
+      data,
+      error: null
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : "Unknown API error"
+    };
+  }
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
@@ -172,4 +205,12 @@ export async function getMarkets(limit = 12): Promise<MarketsResponse> {
 
 export async function getMarketDetail(symbol: string): Promise<MarketDetail> {
   return fetchApi<MarketDetail>(`/markets/${encodeURIComponent(symbol)}`);
+}
+
+export async function safeGetDashboardData(): Promise<ApiResult<DashboardData>> {
+  return safeFetchApi<DashboardData>("/dashboard");
+}
+
+export async function safeGetMarkets(limit = 12): Promise<ApiResult<MarketsResponse>> {
+  return safeFetchApi<MarketsResponse>(`/markets?limit=${limit}`);
 }

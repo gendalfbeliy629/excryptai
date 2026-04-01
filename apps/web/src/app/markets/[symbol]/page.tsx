@@ -50,7 +50,9 @@ export default async function MarketSymbolPage({ params }: PageProps) {
         <div className="grid grid-3">
           <div className="card">
             <h3>Текущая цена</h3>
-            <div className="metric-value">{formatPrice(data.market.spot.priceUsd)}</div>
+            <div className="metric-value">
+              {formatPrice(data.market.spot.priceUsd)}
+            </div>
             <p style={{ marginTop: 12 }}>
               Изменение 24ч: {formatPercent(data.market.spot.change24h)}
               <br />
@@ -75,7 +77,9 @@ export default async function MarketSymbolPage({ params }: PageProps) {
 
           <div className="card">
             <h3>Signal engine</h3>
-            <div className={signalClassName(data.signal.signal)}>{data.signal.signal}</div>
+            <div className={signalClassName(data.signal.signal)}>
+              {data.signal.signal}
+            </div>
             <p style={{ marginTop: 12 }}>
               Score: {data.signal.score.toFixed(2)}
               <br />
@@ -110,7 +114,8 @@ export default async function MarketSymbolPage({ params }: PageProps) {
                 ? data.market.liquidity.protocolsUsed.join(", ")
                 : "n/a"}
               <br />
-              Social volume: {data.market.sentiment.socialVolumeTotal ?? "n/a"}
+              Social volume:{" "}
+              {data.market.sentiment.socialVolumeTotal ?? "n/a"}
               <br />
               Social dominance:{" "}
               {data.market.sentiment.socialDominanceLatest ?? "n/a"}
@@ -125,7 +130,9 @@ export default async function MarketSymbolPage({ params }: PageProps) {
             <h3>Плюсы</h3>
             <ul className="list">
               {data.signal.positives.length ? (
-                data.signal.positives.map((item, index) => <li key={index}>{item}</li>)
+                data.signal.positives.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))
               ) : (
                 <li>Явных позитивных факторов не найдено.</li>
               )}
@@ -136,7 +143,9 @@ export default async function MarketSymbolPage({ params }: PageProps) {
             <h3>Риски</h3>
             <ul className="list">
               {data.signal.negatives.length ? (
-                data.signal.negatives.map((item, index) => <li key={index}>{item}</li>)
+                data.signal.negatives.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))
               ) : (
                 <li>Выраженных негативных факторов не найдено.</li>
               )}
@@ -148,17 +157,31 @@ export default async function MarketSymbolPage({ params }: PageProps) {
       <section className="section">
         <div className="card">
           <h3>Последние свечи</h3>
-          <div className="candles-grid">
-            {recentCandles.map((candle) => (
-              <div className="candle-card" key={candle.time}>
-                <strong>{new Date(candle.time * 1000).toLocaleDateString("ru-RU")}</strong>
-                <div className="muted">Open: {formatPrice(candle.open)}</div>
-                <div className="muted">High: {formatPrice(candle.high)}</div>
-                <div className="muted">Low: {formatPrice(candle.low)}</div>
-                <div className="muted">Close: {formatPrice(candle.close)}</div>
-              </div>
-            ))}
-          </div>
+          {recentCandles.length ? (
+            <div className="candles-grid">
+              {recentCandles.map((candle) => (
+                <div className="candle-card" key={candle.time}>
+                  <strong>
+                    {new Date(candle.time * 1000).toLocaleDateString("ru-RU")}
+                  </strong>
+                  <div className="muted">
+                    Open: {formatPrice(candle.open)}
+                  </div>
+                  <div className="muted">
+                    High: {formatPrice(candle.high)}
+                  </div>
+                  <div className="muted">
+                    Low: {formatPrice(candle.low)}
+                  </div>
+                  <div className="muted">
+                    Close: {formatPrice(candle.close)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>Свечи временно недоступны.</p>
+          )}
         </div>
       </section>
     </>

@@ -1,7 +1,12 @@
 import express, { Request, Response } from "express";
 import { env } from "./config/env";
 import { getBot } from "./bot/bot";
-import { buildMarketContext, getCoinInfo, getCandles, parseMarketPair } from "./services/market.service";
+import {
+  buildMarketContext,
+  getCoinInfo,
+  getCandles,
+  parseMarketPair
+} from "./services/market.service";
 import { evaluateMarketSignal } from "./services/signal.service";
 import { getBuyScanResult } from "./services/buy.service";
 import { SYMBOL_TO_COINCAP_ID, normalizeSymbol } from "./utils/symbols";
@@ -72,11 +77,26 @@ type MarketListItem = {
   score: number;
 };
 
-async function buildMarketListItem(symbol: string): Promise<MarketListItem> {
-  const market = await buildMarketContext(symbol, "USDT");
-  const evaluation = evaluateMarketSignal(market);
+async function buildMarketListItem(symbol: string): Promise<MarketListItem | null> {
+  try {
+    const market = await buildMarketContext(symbol, "USDT");
+    const evaluation = evaluateMarketSignal(market);
 
-  if (!evaluation) {
+    if (!evaluation) {
+      return {
+        symbol: market.asset.symbol,
+        name: market.asset.name,
+        pair: market.pair.display,
+        priceUsd: market.spot.priceUsd,
+        change24h: market.spot.change24h,
+        change30d: market.technicals.change30d,
+        trend30d: market.technicals.trend30d,
+        rsi14: market.technicals.rsi14,
+        signal: "HOLD",
+        score: 0
+      };
+    }
+
     return {
       symbol: market.asset.symbol,
       name: market.asset.name,
@@ -86,23 +106,13 @@ async function buildMarketListItem(symbol: string): Promise<MarketListItem> {
       change30d: market.technicals.change30d,
       trend30d: market.technicals.trend30d,
       rsi14: market.technicals.rsi14,
-      signal: "HOLD",
-      score: 0
+      signal: evaluation.signal,
+      score: evaluation.score
     };
+  } catch (error) {
+    console.error(`Failed to build market list item for ${symbol}:`, error);
+    return null;
   }
-
-  return {
-    symbol: market.asset.symbol,
-    name: market.asset.name,
-    pair: market.pair.display,
-    priceUsd: market.spot.priceUsd,
-    change24h: market.spot.change24h,
-    change30d: market.technicals.change30d,
-    trend30d: market.technicals.trend30d,
-    rsi14: market.technicals.rsi14,
-    signal: evaluation.signal,
-    score: evaluation.score
-  };
 }
 
 const ALL_SYMBOLS = Object.keys(SYMBOL_TO_COINCAP_ID);
@@ -145,15 +155,20 @@ app.get("/api/symbols", (_req, res) => {
 
 app.get("/api/dashboard", async (_req, res) => {
   try {
-    const [featured, buys] = await Promise.all([
+    const [featuredRaw, buys] = await Promise.all([
       mapWithConcurrency(DASHBOARD_SYMBOLS, 3, buildMarketListItem),
       getBuyScanResult(5)
     ]);
 
+    const featured = featuredRaw.filter(
+      (item): item is MarketListItem => item !== null
+    );
+
     return ok(res, {
       featured,
       topBuys: buys.buys,
-      summary: buys.summary
+      summary: buys.summary,
+      degraded: featured.length < DASHBOARD_SYMBOLS.length
     });
   } catch (error) {
     return fail(res, error);
@@ -166,13 +181,15 @@ app.get("/api/markets", async (req, res) => {
     const limit = Math.max(1, Math.min(Number(limitRaw) || 12, ALL_SYMBOLS.length));
     const symbols = ALL_SYMBOLS.slice(0, limit);
 
-    const items = await mapWithConcurrency(symbols, 3, buildMarketListItem);
+    const itemsRaw = await mapWithConcurrency(symbols, 3, buildMarketListItem);
+    const items = itemsRaw.filter((item): item is MarketListItem => item !== null);
 
     items.sort((a, b) => b.score - a.score);
 
     return ok(res, {
       items,
-      total: items.length
+      total: items.length,
+      degraded: items.length < symbols.length
     });
   } catch (error) {
     return fail(res, error);
@@ -188,10 +205,28 @@ app.get("/api/markets/:symbol", async (req, res) => {
 
     return ok(res, {
       market,
-      signal: evaluation ?? {
-        signal: "HOLD",
-        score: 0
-      }
+      signal:
+        evaluation ?? {
+          pair: market.pair.display,
+          symbol: market.asset.symbol,
+          name: market.asset.name,
+          priceUsd: market.spot.priceUsd,
+          change24h: market.spot.change24h,
+          change30d: market.technicals.change30d,
+          trend30d: market.technicals.trend30d,
+          rsi14: market.technicals.rsi14,
+          high30d: market.technicals.high30d,
+          low30d: market.technicals.low30d,
+          sma7: market.technicals.sma7,
+          sma30: market.technicals.sma30,
+          rangePosition: null,
+          pullbackFromHigh: null,
+          score: 0,
+          signal: "HOLD",
+          reason: "Недостаточно данных для полного deterministic signal.",
+          positives: [],
+          negatives: []
+        }
     });
   } catch (error) {
     return fail(res, error, 400);

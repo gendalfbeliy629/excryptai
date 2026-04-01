@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getDashboardData } from "../../lib/api";
+import { safeGetDashboardData } from "../../lib/api";
 import { formatPercent, formatPrice } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,36 @@ function signalClassName(signal: "BUY" | "HOLD" | "SELL") {
 }
 
 export default async function DashboardPage() {
-  const data = await getDashboardData();
+  const result = await safeGetDashboardData();
+
+  if (!result.data) {
+    return (
+      <>
+        <section className="hero">
+          <div className="hero-badge">Dashboard</div>
+          <h1 className="page-title">Crypto AI Dashboard</h1>
+          <p className="page-subtitle">
+            Страница временно недоступна, но frontend больше не падает целиком.
+          </p>
+        </section>
+
+        <section className="section">
+          <div className="card error-card">
+            <h3>Не удалось загрузить dashboard</h3>
+            <p>Backend вернул ошибку при сборке рыночной сводки.</p>
+            <p style={{ marginTop: 12 }}>
+              <strong>Причина:</strong> {result.error ?? "неизвестная ошибка"}
+            </p>
+            <p style={{ marginTop: 12 }}>
+              Попробуй обновить страницу через 10–20 секунд.
+            </p>
+          </div>
+        </section>
+      </>
+    );
+  }
+
+  const data = result.data;
 
   return (
     <>
@@ -23,6 +52,18 @@ export default async function DashboardPage() {
           базовая сводка по текущему месячному горизонту.
         </p>
       </section>
+
+      {data.degraded ? (
+        <section className="section">
+          <div className="card warning-card">
+            <h3>Данные загружены частично</h3>
+            <p>
+              Один или несколько внешних источников временно отдали неполные
+              данные. Страница показана в частичном режиме вместо 500 ошибки.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       <section className="section">
         <div className="grid grid-3">
@@ -39,7 +80,9 @@ export default async function DashboardPage() {
           <div className="card kpi">
             <span className="metric-label">Средний RSI</span>
             <div className="metric-value">
-              {data.summary.avgRsi14 !== null ? data.summary.avgRsi14.toFixed(2) : "n/a"}
+              {data.summary.avgRsi14 !== null
+                ? data.summary.avgRsi14.toFixed(2)
+                : "n/a"}
             </div>
           </div>
         </div>

@@ -80,7 +80,7 @@ export function parseMarketPair(rawInput?: string): ParsedPair {
     return {
       baseSymbol: "BTC",
       quoteSymbol: "USDT",
-      displayPair: "BTC/USDT",
+      displayPair: "BTC/USDT"
     };
   }
 
@@ -96,7 +96,7 @@ export function parseMarketPair(rawInput?: string): ParsedPair {
     return {
       baseSymbol,
       quoteSymbol,
-      displayPair: `${baseSymbol}/${quoteSymbol}`,
+      displayPair: `${baseSymbol}/${quoteSymbol}`
     };
   }
 
@@ -109,7 +109,7 @@ export function parseMarketPair(rawInput?: string): ParsedPair {
   return {
     baseSymbol,
     quoteSymbol: "USDT",
-    displayPair: `${baseSymbol}/USDT`,
+    displayPair: `${baseSymbol}/USDT`
   };
 }
 
@@ -186,6 +186,20 @@ function detectTrend(
   return "SIDEWAYS";
 }
 
+function fallbackLiquidity(): MarketContext["liquidity"] {
+  return {
+    totalTvlUsd: null,
+    protocolsUsed: []
+  };
+}
+
+function fallbackSentiment(): MarketContext["sentiment"] {
+  return {
+    socialVolumeTotal: null,
+    socialDominanceLatest: null
+  };
+}
+
 export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
   const spot = await getSpotPrice(symbolInput);
 
@@ -196,7 +210,7 @@ export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
     change24h: spot.changePercent24Hr,
     marketCapUsd: spot.marketCapUsd,
     volume24hUsd: null,
-    source: "CoinCap",
+    source: "CoinCap"
   };
 }
 
@@ -218,7 +232,7 @@ export async function getOHLC(
     low: row.low,
     close: row.close,
     volumeFrom: row.volumeFrom,
-    volumeTo: row.volumeTo,
+    volumeTo: row.volumeTo
   }));
 }
 
@@ -229,12 +243,41 @@ export async function buildMarketContext(
   const baseSymbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const [assetSpot, pairSpot, candles, liquidity, sentiment] = await Promise.all([
-    getSpotPrice(baseSymbol),
-    getPairPrice(baseSymbol, quoteSymbol),
-    getOHLC(baseSymbol, 30, quoteSymbol),
-    getLiquiditySnapshot(baseSymbol),
-    getSentimentSnapshot(baseSymbol),
+  const assetSpot = await getSpotPrice(baseSymbol);
+
+  const pairSpotPromise = getPairPrice(baseSymbol, quoteSymbol).catch((error) => {
+    console.warn(`Pair price fallback for ${baseSymbol}/${quoteSymbol}:`, error);
+
+    return {
+      fromSymbol: baseSymbol,
+      toSymbol: quoteSymbol,
+      price: assetSpot.priceUsd,
+      change24h: assetSpot.changePercent24Hr,
+      high24h: null,
+      low24h: null
+    };
+  });
+
+  const candlesPromise = getOHLC(baseSymbol, 30, quoteSymbol).catch((error) => {
+    console.warn(`OHLC fallback for ${baseSymbol}/${quoteSymbol}:`, error);
+    return [];
+  });
+
+  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch((error) => {
+    console.warn(`Liquidity fallback for ${baseSymbol}:`, error);
+    return fallbackLiquidity();
+  });
+
+  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch((error) => {
+    console.warn(`Sentiment fallback for ${baseSymbol}:`, error);
+    return fallbackSentiment();
+  });
+
+  const [pairSpot, candles, liquidity, sentiment] = await Promise.all([
+    pairSpotPromise,
+    candlesPromise,
+    liquidityPromise,
+    sentimentPromise
   ]);
 
   const highs = candles.map((c) => c.high).filter((v) => Number.isFinite(v));
@@ -253,17 +296,17 @@ export async function buildMarketContext(
     asset: {
       symbol: assetSpot.symbol,
       name: assetSpot.name,
-      id: assetSpot.id,
+      id: assetSpot.id
     },
     pair: {
       baseSymbol,
       quoteSymbol,
-      display: `${baseSymbol}/${quoteSymbol}`,
+      display: `${baseSymbol}/${quoteSymbol}`
     },
     spot: {
       priceUsd: pairSpot.price,
       change24h: pairSpot.change24h,
-      marketCapUsd: assetSpot.marketCapUsd,
+      marketCapUsd: assetSpot.marketCapUsd
     },
     technicals: {
       period: "30d",
@@ -274,10 +317,10 @@ export async function buildMarketContext(
       sma7,
       sma30,
       trend30d,
-      candles,
+      candles
     },
     liquidity,
-    sentiment,
+    sentiment
   };
 }
 

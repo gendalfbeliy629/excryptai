@@ -35,16 +35,62 @@ function normalizeQuoteSymbol(input: string): string {
   return input.trim().toUpperCase().replace(/\//g, "");
 }
 
-function mapRows(rows: any[]): Candle[] {
-  return rows.map((row: any) => ({
-    time: Number(row.time),
-    open: Number(row.open),
-    high: Number(row.high),
-    low: Number(row.low),
-    close: Number(row.close),
-    volumeFrom: Number(row.volumefrom),
-    volumeTo: Number(row.volumeto),
-  }));
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function normalizeNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapRows(rows: unknown[]): Candle[] {
+  return rows
+    .map((row: any) => {
+      const time = normalizeNumber(row?.time);
+      const open = normalizeNumber(row?.open);
+      const high = normalizeNumber(row?.high);
+      const low = normalizeNumber(row?.low);
+      const close = normalizeNumber(row?.close);
+      const volumeFrom = normalizeNumber(row?.volumefrom) ?? 0;
+      const volumeTo = normalizeNumber(row?.volumeto) ?? 0;
+
+      if (
+        time === null ||
+        open === null ||
+        high === null ||
+        low === null ||
+        close === null
+      ) {
+        return null;
+      }
+
+      if (high < low) {
+        return null;
+      }
+
+      if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+        return null;
+      }
+
+      return {
+        time,
+        open,
+        high,
+        low,
+        close,
+        volumeFrom,
+        volumeTo
+      };
+    })
+    .filter((item): item is Candle => item !== null)
+    .sort((a, b) => a.time - b.time);
+}
+
+function warnInvalidOhlc(type: "hourly" | "daily", symbol: string, quoteSymbol: string) {
+  console.warn(
+    `CryptoCompare returned invalid ${type} OHLC for ${symbol}/${quoteSymbol}. Fallback to empty candles.`
+  );
 }
 
 export async function getPairPrice(
@@ -59,10 +105,10 @@ export async function getPairPrice(
     {
       params: {
         fsyms: fromSymbol,
-        tsyms: toSymbol,
+        tsyms: toSymbol
       },
       headers: buildHeaders(),
-      timeout: 10000,
+      timeout: 10000
     }
   );
 
@@ -74,14 +120,21 @@ export async function getPairPrice(
     );
   }
 
+  const price = normalizeNumber(raw.PRICE);
+
+  if (price === null || price <= 0) {
+    throw new Error(
+      `CryptoCompare returned invalid pair price for ${fromSymbol}/${toSymbol}`
+    );
+  }
+
   return {
     fromSymbol,
     toSymbol,
-    price: Number(raw.PRICE),
-    change24h:
-      typeof raw.CHANGEPCT24HOUR === "number" ? raw.CHANGEPCT24HOUR : null,
-    high24h: typeof raw.HIGH24HOUR === "number" ? raw.HIGH24HOUR : null,
-    low24h: typeof raw.LOW24HOUR === "number" ? raw.LOW24HOUR : null,
+    price,
+    change24h: isFiniteNumber(raw.CHANGEPCT24HOUR) ? raw.CHANGEPCT24HOUR : null,
+    high24h: isFiniteNumber(raw.HIGH24HOUR) ? raw.HIGH24HOUR : null,
+    low24h: isFiniteNumber(raw.LOW24HOUR) ? raw.LOW24HOUR : null
   };
 }
 
@@ -93,28 +146,35 @@ export async function getHourlyOHLC(
   const symbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const response = await axios.get(
-    "https://min-api.cryptocompare.com/data/v2/histohour",
-    {
-      params: {
-        fsym: symbol,
-        tsym: quoteSymbol,
-        limit,
-      },
-      headers: buildHeaders(),
-      timeout: 10000,
-    }
-  );
-
-  const rows = response.data?.Data?.Data;
-
-  if (!Array.isArray(rows)) {
-    throw new Error(
-      `CryptoCompare returned invalid hourly OHLC for ${symbol}/${quoteSymbol}`
+  try {
+    const response = await axios.get(
+      "https://min-api.cryptocompare.com/data/v2/histohour",
+      {
+        params: {
+          fsym: symbol,
+          tsym: quoteSymbol,
+          limit
+        },
+        headers: buildHeaders(),
+        timeout: 10000
+      }
     );
-  }
 
-  return mapRows(rows);
+    const rows = response.data?.Data?.Data;
+
+    if (!Array.isArray(rows)) {
+      warnInvalidOhlc("hourly", symbol, quoteSymbol);
+      return [];
+    }
+
+    return mapRows(rows);
+  } catch (error) {
+    console.warn(
+      `CryptoCompare hourly OHLC request failed for ${symbol}/${quoteSymbol}:`,
+      error
+    );
+    return [];
+  }
 }
 
 export async function getDailyOHLC(
@@ -125,26 +185,33 @@ export async function getDailyOHLC(
   const symbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const response = await axios.get(
-    "https://min-api.cryptocompare.com/data/v2/histoday",
-    {
-      params: {
-        fsym: symbol,
-        tsym: quoteSymbol,
-        limit,
-      },
-      headers: buildHeaders(),
-      timeout: 10000,
-    }
-  );
-
-  const rows = response.data?.Data?.Data;
-
-  if (!Array.isArray(rows)) {
-    throw new Error(
-      `CryptoCompare returned invalid daily OHLC for ${symbol}/${quoteSymbol}`
+  try {
+    const response = await axios.get(
+      "https://min-api.cryptocompare.com/data/v2/histoday",
+      {
+        params: {
+          fsym: symbol,
+          tsym: quoteSymbol,
+          limit
+        },
+        headers: buildHeaders(),
+        timeout: 10000
+      }
     );
-  }
 
-  return mapRows(rows);
+    const rows = response.data?.Data?.Data;
+
+    if (!Array.isArray(rows)) {
+      warnInvalidOhlc("daily", symbol, quoteSymbol);
+      return [];
+    }
+
+    return mapRows(rows);
+  } catch (error) {
+    console.warn(
+      `CryptoCompare daily OHLC request failed for ${symbol}/${quoteSymbol}:`,
+      error
+    );
+    return [];
+  }
 }
