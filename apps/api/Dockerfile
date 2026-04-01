@@ -17,13 +17,16 @@ COPY . .
 
 RUN pnpm --filter @crypto-ai/api build
 
-FROM node:24-alpine AS runtime
+FROM base AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY package.json pnpm-workspace.yaml .npmrc ./
+COPY apps/api/package.json apps/api/package.json
+
+RUN pnpm install --filter @crypto-ai/api --prod --frozen-lockfile=false
+
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 
 WORKDIR /app/apps/api
