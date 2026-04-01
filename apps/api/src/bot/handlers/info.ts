@@ -10,6 +10,7 @@ export function registerInfoHandler(bot: Telegraf) {
       await ctx.reply(`Собираю справку по ${rawSymbol.toUpperCase()}...`);
 
       const answer = await getAssetInfo(rawSymbol);
+
       await ctx.reply(answer, {
         link_preview_options: {
           is_disabled: true,
@@ -18,7 +19,7 @@ export function registerInfoHandler(bot: Telegraf) {
     } catch (error) {
       console.error("Info handler error:", error);
       await ctx.reply(
-        "❌ Не удалось собрать информацию по монете. Примеры: /info BTC или /info ETH"
+        "❌ Временно не удалось собрать информацию по монете. Попробуй ещё раз через несколько секунд.\n\nПримеры: /info BTC или /info ETH"
       );
     }
   });

@@ -1,6 +1,7 @@
 import axios from "axios";
 import Groq from "groq-sdk";
 import { env } from "../config/env";
+import { TTLCache } from "../utils/cache";
 import { normalizeSymbol } from "../utils/symbols";
 
 type CoinSearchResult = {
@@ -85,6 +86,9 @@ const groq = new Groq({
   apiKey: env.GROQ_API_KEY,
 });
 
+const infoCache = new TTLCache<string>();
+const INFO_CACHE_TTL_MS = 10 * 60 * 1000;
+
 const OFFICIAL_WALLETS: Record<string, WalletInfo> = {
   BTC: {
     official: ["Bitcoin Core"],
@@ -167,13 +171,15 @@ const SUPPLEMENTAL_ASSET_INFO: Record<string, SupplementalAssetInfo> = {
   },
   ETH: {
     blockchainSize: "нет надёжных данных",
-    blockReward: "после перехода на PoS классическая награда за блок в прежнем виде не применяется",
+    blockReward:
+      "после перехода на PoS классическая награда за блок в прежнем виде не применяется",
     halving: "нет",
     consensusType: "Proof-of-Stake (PoS)",
   },
   SOL: {
     blockchainSize: "нет надёжных данных",
-    blockReward: "награды распределяются через механизм валидаторов и инфляционную модель сети",
+    blockReward:
+      "награды распределяются через механизм валидаторов и инфляционную модель сети",
     halving: "нет",
     consensusType: "Proof-of-Stake (PoS) + Proof-of-History (PoH)",
   },
@@ -209,6 +215,32 @@ const SUPPLEMENTAL_ASSET_INFO: Record<string, SupplementalAssetInfo> = {
   },
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 3,
+  baseDelayMs = 1200
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (i < attempts - 1) {
+        await sleep(baseDelayMs * (i + 1));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function compactText(input: string, maxLength = 6000): string {
   const cleaned = input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
@@ -220,7 +252,10 @@ function compactText(input: string, maxLength = 6000): string {
 }
 
 function formatUsd(value?: number | null): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "нет надёжных данных";
+  }
+
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `$${value.toFixed(2)}`;
@@ -310,13 +345,84 @@ function getSupplementalInfo(symbol: string): SupplementalAssetInfo {
   );
 }
 
+function buildFallbackInfo(params: {
+  details: CoinGeckoDetails;
+  symbol: string;
+  supplemental: SupplementalAssetInfo;
+  wallets: WalletInfo;
+  exchanges: string[];
+  description: string;
+}): string {
+  const { details, symbol, supplemental, wallets, exchanges, description } = params;
+
+  return [
+    `🔹 ${details.name} (${symbol})`,
+    "",
+    "1. История создания и цель",
+    `- ${description.slice(0, 700) || "нет надёжных данных"}`,
+    "",
+    "2. Ключевые характеристики",
+    `- Как добывается: ${buildMiningInfo(details, symbol)}`,
+    `- Алгоритм / тип сети: ${supplemental.consensusType || "нет надёжных данных"}`,
+    `- Алгоритм хеширования: ${details.hashing_algorithm || "нет надёжных данных"}`,
+    `- Дата запуска: ${details.genesis_date || "нет надёжных данных"}`,
+    `- Время формирования блока: ${formatBlockTime(details.block_time_in_minutes)}`,
+    `- Circulating Supply: ${formatNumber(details.market_data?.circulating_supply)}`,
+    `- Total Supply: ${formatNumber(details.market_data?.total_supply)}`,
+    `- Максимальная эмиссия: ${formatNumber(details.market_data?.max_supply)}`,
+    `- Market Cap Rank: ${details.market_cap_rank ?? "нет надёжных данных"}`,
+    `- Капитализация: ${formatUsd(details.market_data?.market_cap?.usd)}`,
+    `- Цена: ${formatUsd(details.market_data?.current_price?.usd)}`,
+    `- Изменение 24ч: ${formatPercent(details.market_data?.price_change_percentage_24h)}`,
+    `- Volume 24h: ${formatUsd(details.market_data?.total_volume?.usd)}`,
+    `- Размер блокчейна: ${supplemental.blockchainSize || "нет надёжных данных"}`,
+    `- Текущая награда за блок: ${supplemental.blockReward || "нет надёжных данных"}`,
+    `- Халвинг: ${supplemental.halving || "нет надёжных данных"}`,
+    `- ATH: ${formatUsd(details.market_data?.ath?.usd)} (${details.market_data?.ath_date?.usd || "нет надёжных данных"})`,
+    `- ATL: ${formatUsd(details.market_data?.atl?.usd)} (${details.market_data?.atl_date?.usd || "нет надёжных данных"})`,
+    "",
+    "3. Кошельки",
+    `- Официальные: ${wallets.official.join(", ")}`,
+    `- Популярные: ${wallets.unofficial.join(", ")}`,
+    "",
+    "4. Где купить",
+    `- ${exchanges.join(", ") || "нет надёжных данных"}`,
+    "",
+    "5. Где и как применяется",
+    "- Нет полной надёжной структурированной информации в fallback-режиме. Основное назначение можно смотреть на официальном сайте и в описании проекта.",
+    "",
+    "6. Плюсы",
+    "- Зависит от архитектуры сети, ликвидности и уровня принятия экосистемы.",
+    "",
+    "7. Минусы",
+    "- Зависит от модели консенсуса, централизации, активности разработчиков и рыночных рисков.",
+    "",
+    "8. Текущий статус развития",
+    `- GitHub stars: ${formatNumber(details.developer_data?.stars)}`,
+    `- Forks: ${formatNumber(details.developer_data?.forks)}`,
+    `- Commits за 4 недели: ${formatNumber(details.developer_data?.commit_count_4_weeks)}`,
+    `- Twitter followers: ${formatNumber(details.community_data?.twitter_followers)}`,
+    `- Reddit subscribers: ${formatNumber(details.community_data?.reddit_subscribers)}`,
+    "",
+    "9. Дополнительно",
+    `- Официальный сайт: ${dedupeStrings(details.links?.homepage || [], 3).join(", ") || "нет надёжных данных"}`,
+    `- Explorer / blockchain site: ${dedupeStrings(details.links?.blockchain_site || [], 4).join(", ") || "нет надёжных данных"}`,
+    `- GitHub: ${dedupeStrings(details.links?.repos_url?.github || [], 3).join(", ") || "нет надёжных данных"}`,
+  ].join("\n");
+}
+
 async function searchCoin(query: string): Promise<CoinSearchResult> {
   const normalized = normalizeSymbol(query);
 
-  const response = await axios.get("https://api.coingecko.com/api/v3/search", {
-    params: { query: normalized },
-    timeout: 15000,
-  });
+  const response = await withRetry(
+    () =>
+      axios.get("https://api.coingecko.com/api/v3/search", {
+        params: { query: normalized },
+        timeout: 20000,
+      }),
+    3,
+    1200
+  );
 
   const coins = Array.isArray(response.data?.coins) ? response.data.coins : [];
   const exact =
@@ -337,23 +443,35 @@ async function searchCoin(query: string): Promise<CoinSearchResult> {
 async function getCoinDetails(query: string): Promise<CoinGeckoDetails> {
   const found = await searchCoin(query);
 
-  const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${found.id}`, {
-    params: {
-      localization: false,
-      tickers: true,
-      market_data: true,
-      community_data: true,
-      developer_data: true,
-      sparkline: false,
-    },
-    timeout: 20000,
-  });
+  const response = await withRetry(
+    () =>
+      axios.get(`https://api.coingecko.com/api/v3/coins/${found.id}`, {
+        params: {
+          localization: false,
+          tickers: true,
+          market_data: true,
+          community_data: true,
+          developer_data: true,
+          sparkline: false,
+        },
+        timeout: 25000,
+      }),
+    3,
+    1500
+  );
 
   return response.data as CoinGeckoDetails;
 }
 
 export async function getAssetInfo(symbolOrPair: string): Promise<string> {
   const normalizedInput = normalizeSymbol(symbolOrPair.split("/")[0] || symbolOrPair);
+  const cacheKey = `info:${normalizedInput}`;
+  const cached = infoCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const details = await getCoinDetails(normalizedInput);
   const symbol = String(details.symbol || normalizedInput).toUpperCase();
   const supplemental = getSupplementalInfo(symbol);
@@ -473,13 +591,16 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
     },
   };
 
-  const response = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    temperature: 0.2,
-    messages: [
-      {
-        role: "system",
-        content: `
+  try {
+    const response = await withRetry(
+      () =>
+        groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content: `
 Ты senior crypto research analyst.
 Отвечай только на русском языке.
 Не выдумывай факты, используй только данные из JSON.
@@ -487,11 +608,11 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
 Если размер блокчейна, награда за блок или халвинг не подтверждены в данных, так и пиши.
 Если актив не майнится, не называй его майнинговой монетой.
 Сделай ответ компактным, но информативным.
-        `.trim(),
-      },
-      {
-        role: "user",
-        content: `
+              `.trim(),
+            },
+            {
+              role: "user",
+              content: `
 Подготовь карточку по криптовалюте в строгой структуре:
 
 🔹 <название> (<тикер>)
@@ -542,48 +663,33 @@ export async function getAssetInfo(symbolOrPair: string): Promise<string> {
 
 JSON:
 ${JSON.stringify(promptPayload, null, 2)}
-        `.trim(),
-      },
-    ],
-  });
+              `.trim(),
+            },
+          ],
+        }),
+      3,
+      1500
+    );
 
-  const content = response.choices[0]?.message?.content?.trim();
+    const content = response.choices[0]?.message?.content?.trim();
 
-  if (content) {
-    return content;
+    if (content) {
+      infoCache.set(cacheKey, content, INFO_CACHE_TTL_MS);
+      return content;
+    }
+  } catch (error) {
+    console.error("Groq info generation error:", error);
   }
 
-  return [
-    `🔹 ${details.name} (${symbol})`,
-    "",
-    "1. История создания и цель",
-    `- ${description.slice(0, 700) || "нет надёжных данных"}`,
-    "",
-    "2. Ключевые характеристики",
-    `- Как добывается: ${buildMiningInfo(details, symbol)}`,
-    `- Алгоритм / тип сети: ${supplemental.consensusType || "нет надёжных данных"}`,
-    `- Алгоритм хеширования: ${details.hashing_algorithm || "нет надёжных данных"}`,
-    `- Дата запуска: ${details.genesis_date || "нет надёжных данных"}`,
-    `- Время формирования блока: ${formatBlockTime(details.block_time_in_minutes)}`,
-    `- Circulating Supply: ${formatNumber(details.market_data?.circulating_supply)}`,
-    `- Total Supply: ${formatNumber(details.market_data?.total_supply)}`,
-    `- Максимальная эмиссия: ${formatNumber(details.market_data?.max_supply)}`,
-    `- Market Cap Rank: ${details.market_cap_rank ?? "нет надёжных данных"}`,
-    `- Капитализация: ${formatUsd(details.market_data?.market_cap?.usd)}`,
-    `- Цена: ${formatUsd(details.market_data?.current_price?.usd)}`,
-    `- Изменение 24ч: ${formatPercent(details.market_data?.price_change_percentage_24h)}`,
-    `- Volume 24h: ${formatUsd(details.market_data?.total_volume?.usd)}`,
-    `- Размер блокчейна: ${supplemental.blockchainSize || "нет надёжных данных"}`,
-    `- Текущая награда за блок: ${supplemental.blockReward || "нет надёжных данных"}`,
-    `- Халвинг: ${supplemental.halving || "нет надёжных данных"}`,
-    `- ATH: ${formatUsd(details.market_data?.ath?.usd)} (${details.market_data?.ath_date?.usd || "нет надёжных данных"})`,
-    `- ATL: ${formatUsd(details.market_data?.atl?.usd)} (${details.market_data?.atl_date?.usd || "нет надёжных данных"})`,
-    "",
-    "3. Кошельки",
-    `- Официальные: ${wallets.official.join(", ")}`,
-    `- Популярные: ${wallets.unofficial.join(", ")}`,
-    "",
-    "4. Где купить",
-    `- ${exchanges.join(", ") || "нет надёжных данных"}`,
-  ].join("\n");
+  const fallback = buildFallbackInfo({
+    details,
+    symbol,
+    supplemental,
+    wallets,
+    exchanges,
+    description,
+  });
+
+  infoCache.set(cacheKey, fallback, INFO_CACHE_TTL_MS);
+  return fallback;
 }
