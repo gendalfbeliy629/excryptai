@@ -5,8 +5,10 @@ export type DeterministicSignal = "BUY" | "HOLD" | "SELL";
 export type SignalEvaluation = {
   pair: string;
   symbol: string;
+  quoteSymbol: string;
   name: string;
-  priceUsd: number;
+  price: number;
+  priceUsd: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: TrendType;
@@ -26,15 +28,15 @@ export type SignalEvaluation = {
   setupScore: number;
   spaceScore: number;
   executionScore: number;
-  atr1hUsd: number | null;
+  atr1h: number | null;
   atr1hPercent: number | null;
-  nearestResistanceUsd: number | null;
-  nextResistanceUsd: number | null;
-  nearestSupportUsd: number | null;
+  nearestResistance: number | null;
+  nextResistance: number | null;
+  nearestSupport: number | null;
   roomToResistancePercent: number | null;
-  entryZoneLowUsd: number | null;
-  entryZoneHighUsd: number | null;
-  breakEvenActivationPriceUsd: number | null;
+  entryZoneLow: number | null;
+  entryZoneHigh: number | null;
+  breakEvenActivationPrice: number | null;
   trailingAtrMultiplier: number;
 };
 
@@ -46,8 +48,23 @@ function round(value: number): number {
   return Number(value.toFixed(2));
 }
 
-function getRangePosition(price: number, low: number | null, high: number | null): number | null {
-  if (low === null || high === null || !Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
+function formatNumber(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return "n/a";
+  return value.toFixed(digits);
+}
+
+function getRangePosition(
+  price: number,
+  low: number | null,
+  high: number | null
+): number | null {
+  if (
+    low === null ||
+    high === null ||
+    !Number.isFinite(low) ||
+    !Number.isFinite(high) ||
+    high <= low
+  ) {
     return null;
   }
 
@@ -62,27 +79,22 @@ function getPullbackFromHigh(price: number, high: number | null): number | null 
   return ((high - price) / high) * 100;
 }
 
-function formatNumber(value: number | null, digits = 2): string {
-  if (value === null || !Number.isFinite(value)) return "n/a";
-  return value.toFixed(digits);
-}
-
 export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | null {
-  const priceUsd = market.spot.priceUsd;
+  const price = market.spot.price;
   const daily = market.technicals;
   const intraday1h = market.technicals.intraday1h;
   const intraday4h = market.technicals.intraday4h;
   const structure = market.technicals.structure;
   const execution = market.execution;
 
-  if (!priceUsd || priceUsd <= 0) {
+  if (!price || price <= 0) {
     return null;
   }
 
-  const rangePosition = getRangePosition(priceUsd, daily.low30d, daily.high30d);
-  const pullbackFromHigh = getPullbackFromHigh(priceUsd, daily.high30d);
-  const atr1hUsd = intraday1h.atr14;
-  const atr1hPercent = atr1hUsd && priceUsd > 0 ? (atr1hUsd / priceUsd) * 100 : null;
+  const rangePosition = getRangePosition(price, daily.low30d, daily.high30d);
+  const pullbackFromHigh = getPullbackFromHigh(price, daily.high30d);
+  const atr1h = intraday1h.atr14;
+  const atr1hPercent = atr1h && price > 0 ? (atr1h / price) * 100 : null;
 
   const positives: string[] = [];
   const negatives: string[] = [];
@@ -91,17 +103,17 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   const regimeBullish =
     daily.trend30d === "BULLISH" &&
     daily.sma30 !== null &&
-    priceUsd > daily.sma30 &&
+    price > daily.sma30 &&
     (daily.change30d ?? -999) >= 4;
 
   if (regimeBullish) {
     regimeScore += 28;
     positives.push("дневной режим рынка бычий и цена держится выше SMA30");
   } else if (daily.trend30d === "BEARISH") {
-    regimeScore -= 20;
+    regimeScore -= 22;
     negatives.push("дневной режим рынка медвежий");
   } else {
-    regimeScore += 4;
+    regimeScore += 2;
     negatives.push("дневной режим рынка не дает сильного трендового преимущества");
   }
 
@@ -113,7 +125,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
       regimeScore -= 10;
       negatives.push("дневной RSI перегрет");
     } else if (daily.rsi14 < 42) {
-      regimeScore -= 6;
+      regimeScore -= 8;
       negatives.push("дневной RSI слабый для уверенного long");
     }
   }
@@ -123,7 +135,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     intraday4h.ema20 !== null &&
     intraday4h.ema50 !== null &&
     intraday4h.ema20 > intraday4h.ema50 &&
-    priceUsd >= intraday4h.ema20;
+    price >= intraday4h.ema20;
 
   if (fourHourBullish) {
     setupScore += 18;
@@ -133,7 +145,11 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     negatives.push("4H структура не подтверждает сильный лонг-сетап");
   }
 
-  const oneHourRsiOk = intraday1h.rsi14 !== null && intraday1h.rsi14 >= 48 && intraday1h.rsi14 <= 67;
+  const oneHourRsiOk =
+    intraday1h.rsi14 !== null &&
+    intraday1h.rsi14 >= 48 &&
+    intraday1h.rsi14 <= 67;
+
   if (oneHourRsiOk) {
     setupScore += 8;
     positives.push("1H RSI не перегрет и остается в рабочей зоне");
@@ -145,7 +161,9 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     negatives.push("1H RSI не дает чистого входного триггера");
   }
 
-  const volumeConfirmation = intraday1h.volumeRatio !== null && intraday1h.volumeRatio >= 1.08;
+  const volumeConfirmation =
+    intraday1h.volumeRatio !== null && intraday1h.volumeRatio >= 1.08;
+
   if (volumeConfirmation) {
     setupScore += 8;
     positives.push("1H объем не ниже среднего и поддерживает сценарий");
@@ -156,13 +174,17 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
 
   const pullbackToEma =
     intraday1h.ema20 !== null &&
-    atr1hUsd !== null &&
-    Math.abs(priceUsd - intraday1h.ema20) <= atr1hUsd * 0.9;
+    atr1h !== null &&
+    Math.abs(price - intraday1h.ema20) <= atr1h * 0.9;
 
   if (pullbackToEma) {
     setupScore += 8;
     positives.push("цена стоит близко к 1H EMA20, вход не слишком растянут");
-  } else if (intraday1h.ema20 !== null && atr1hUsd !== null && priceUsd > intraday1h.ema20 + atr1hUsd * 1.5) {
+  } else if (
+    intraday1h.ema20 !== null &&
+    atr1h !== null &&
+    price > intraday1h.ema20 + atr1h * 1.5
+  ) {
     setupScore -= 10;
     negatives.push("цена слишком далеко убежала от 1H EMA20");
   }
@@ -171,7 +193,10 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   const roomToResistancePercent = structure.roomToResistancePercent;
   const minimumRoomPercent = Math.max(atr1hPercent !== null ? atr1hPercent * 1.2 : 0, 1.8);
 
-  if (roomToResistancePercent !== null && roomToResistancePercent >= minimumRoomPercent) {
+  if (
+    roomToResistancePercent !== null &&
+    roomToResistancePercent >= minimumRoomPercent
+  ) {
     spaceScore += 22;
     positives.push("до ближайшего сопротивления есть рабочее пространство для TP1");
   } else {
@@ -190,6 +215,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   }
 
   let executionScore = 0;
+
   if (execution.spreadPercent !== null) {
     if (execution.spreadPercent <= 0.15) {
       executionScore += 6;
@@ -215,7 +241,10 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     negatives.push("над ценой заметно давление sell wall");
   }
 
-  if (market.sentiment.socialDominanceLatest !== null && market.sentiment.socialDominanceLatest > 12) {
+  if (
+    market.sentiment.socialDominanceLatest !== null &&
+    market.sentiment.socialDominanceLatest > 12
+  ) {
     executionScore -= 4;
     negatives.push("социальное доминирование повышено, толпа может быть перегрета");
   }
@@ -223,38 +252,55 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   const rawScore = regimeScore + setupScore + spaceScore + executionScore + 50;
   const score = clamp(round(rawScore), 0, 100);
 
-  const hardBearish = daily.trend30d === "BEARISH" && (daily.change30d ?? 0) < -5;
-  const buyAllowed = regimeBullish && fourHourBullish && roomToResistancePercent !== null && roomToResistancePercent >= minimumRoomPercent && score >= 68;
+  const hardBearish =
+    daily.trend30d === "BEARISH" && (daily.change30d ?? 0) < -5;
 
-  const signal: DeterministicSignal = hardBearish ? "SELL" : buyAllowed ? "BUY" : "HOLD";
+  const buyAllowed =
+    regimeBullish &&
+    fourHourBullish &&
+    roomToResistancePercent !== null &&
+    roomToResistancePercent >= minimumRoomPercent &&
+    score >= 68;
 
-  const entryZoneLowUsd = intraday1h.ema20 !== null && atr1hUsd !== null
-    ? Math.max(priceUsd - atr1hUsd * 0.35, intraday1h.ema20 - atr1hUsd * 0.25)
-    : priceUsd * 0.995;
-  const entryZoneHighUsd = intraday1h.ema20 !== null && atr1hUsd !== null
-    ? Math.min(priceUsd, intraday1h.ema20 + atr1hUsd * 0.25)
-    : priceUsd;
+  const signal: DeterministicSignal = hardBearish
+    ? "SELL"
+    : buyAllowed
+      ? "BUY"
+      : "HOLD";
 
-  const reason = signal === "BUY"
-    ? [
-        "buy разрешен только после проверки 1D режима, 4H структуры, 1H входа и пространства до сопротивления",
-        `room до ближайшего сопротивления: ${formatNumber(roomToResistancePercent)}%`,
-        `ATR 1H: ${formatNumber(atr1hPercent)}%`,
-        `объем 1H к среднему: ${formatNumber(intraday1h.volumeRatio)}`
-      ].join(", ")
-    : signal === "SELL"
-      ? "дневной режим рынка слабый, импульс отрицательный и long-сценарий ломается"
-      : [
-          "сигнал удержан в HOLD, потому что условия для качественного BUY не выполнены",
-          `room до сопротивления: ${formatNumber(roomToResistancePercent)}%`,
-          `минимально допустимо: ${formatNumber(minimumRoomPercent)}%`
-        ].join(", ");
+  const entryZoneLow =
+    intraday1h.ema20 !== null && atr1h !== null
+      ? Math.max(price - atr1h * 0.35, intraday1h.ema20 - atr1h * 0.25)
+      : price * 0.995;
+
+  const entryZoneHigh =
+    intraday1h.ema20 !== null && atr1h !== null
+      ? Math.min(price, intraday1h.ema20 + atr1h * 0.25)
+      : price;
+
+  const reason =
+    signal === "BUY"
+      ? [
+          "buy разрешен только после проверки 1D режима, 4H структуры, 1H входа и пространства до сопротивления",
+          `room до ближайшего сопротивления: ${formatNumber(roomToResistancePercent)}%`,
+          `ATR 1H: ${formatNumber(atr1hPercent)}%`,
+          `объем 1H к среднему: ${formatNumber(intraday1h.volumeRatio)}`
+        ].join(", ")
+      : signal === "SELL"
+        ? "дневной режим рынка слабый, импульс отрицательный и long-сценарий ломается"
+        : [
+            "сигнал удержан в HOLD, потому что условия для качественного BUY не выполнены",
+            `room до сопротивления: ${formatNumber(roomToResistancePercent)}%`,
+            `минимально допустимо: ${formatNumber(minimumRoomPercent)}%`
+          ].join(", ");
 
   return {
     pair: market.pair.display,
     symbol: market.asset.symbol,
+    quoteSymbol: market.pair.quoteSymbol,
     name: market.asset.name,
-    priceUsd,
+    price,
+    priceUsd: market.spot.priceUsd,
     change24h: market.spot.change24h,
     change30d: daily.change30d,
     trend30d: daily.trend30d,
@@ -274,15 +320,16 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     setupScore: round(setupScore),
     spaceScore: round(spaceScore),
     executionScore: round(executionScore),
-    atr1hUsd,
+    atr1h,
     atr1hPercent,
-    nearestResistanceUsd: structure.nearestResistanceUsd,
-    nextResistanceUsd: structure.nextResistanceUsd,
-    nearestSupportUsd: structure.nearestSupportUsd,
+    nearestResistance: structure.nearestResistance,
+    nextResistance: structure.nextResistance,
+    nearestSupport: structure.nearestSupport,
     roomToResistancePercent,
-    entryZoneLowUsd,
-    entryZoneHighUsd,
-    breakEvenActivationPriceUsd: atr1hUsd !== null ? priceUsd + atr1hUsd * 1.3 : priceUsd * 1.013,
+    entryZoneLow,
+    entryZoneHigh,
+    breakEvenActivationPrice:
+      atr1h !== null ? price + atr1h * 1.3 : price * 1.013,
     trailingAtrMultiplier: 1.25,
   };
 }

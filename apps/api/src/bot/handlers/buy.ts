@@ -1,11 +1,33 @@
 import { Telegraf } from "telegraf";
-import { BuyCandidate, getBuyScanResult } from "../../services/buy.service";
+import {
+  BuyCandidate,
+  FailedMarketDetail,
+  getBuyScanResult,
+} from "../../services/buy.service";
 
-function formatPrice(price: number): string {
-  if (price >= 1000) return `$${price.toFixed(2)}`;
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  if (price >= 0.01) return `$${price.toFixed(6)}`;
-  return `$${price.toFixed(8)}`;
+const STABLE_QUOTES = new Set([
+  "USD",
+  "USDT",
+  "USDC",
+  "BUSD",
+  "FDUSD",
+  "TUSD",
+  "DAI",
+]);
+
+function formatValue(value: number, quoteSymbol: string): string {
+  const quote = quoteSymbol.toUpperCase();
+
+  if (STABLE_QUOTES.has(quote)) {
+    if (value >= 1000) return `$${value.toFixed(2)}`;
+    if (value >= 1) return `$${value.toFixed(4)}`;
+    if (value >= 0.01) return `$${value.toFixed(6)}`;
+    return `$${value.toFixed(8)}`;
+  }
+
+  if (value >= 1000) return `${value.toFixed(2)} ${quote}`;
+  if (value >= 1) return `${value.toFixed(6)} ${quote}`;
+  return `${value.toFixed(8)} ${quote}`;
 }
 
 function formatPercent(value: number | null): string {
@@ -19,24 +41,44 @@ function formatNullable(value: number | null, digits = 2): string {
   return value.toFixed(digits);
 }
 
+function buildFailedMarketsBlock(
+  failedDetails: FailedMarketDetail[],
+  maxItems = 12
+): string {
+  if (!failedDetails.length) {
+    return "Ошибок анализа нет.";
+  }
+
+  const lines = failedDetails
+    .slice(0, maxItems)
+    .map((item) => `- ${item.pair}: ${item.reason}`);
+
+  if (failedDetails.length > maxItems) {
+    lines.push(`- ... еще ${failedDetails.length - maxItems} рынков с ошибками`);
+  }
+
+  return lines.join("\n");
+}
+
 function buildBuyCard(item: BuyCandidate): string {
   const managementText = item.managementPlan.map((step) => `- ${step}`).join("\n");
+  const q = item.quoteSymbol;
 
   return [
     `${item.rank}. ${item.pair} — ${item.signal}`,
     `Биржа / данные: ${item.exchange}`,
-    `Текущая цена: ${formatPrice(item.priceUsd)}`,
-    `Зона входа: ${formatPrice(item.entryFromUsd)} - ${formatPrice(item.entryToUsd)}`,
-    `Начальный stop-loss: ${formatPrice(item.initialStopLossUsd)} (-${item.riskPercent.toFixed(2)}%)`,
-    `TP1: ${formatPrice(item.tp1Usd)} (${formatPercent(item.tp1Percent)}) | R/R 1:${item.riskRewardTp1.toFixed(2)}`,
-    `TP2: ${formatPrice(item.tp2Usd)} (${formatPercent(item.tp2Percent)}) | R/R 1:${item.riskRewardTp2.toFixed(2)}`,
-    `TP3: ${formatPrice(item.tp3Usd)} (${formatPercent(item.tp3Percent)}) | R/R 1:${item.riskRewardTp3.toFixed(2)}`,
-    `Break-even только после подтверждения: ${formatPrice(item.breakEvenActivationPriceUsd)}`,
-    `Цена безубытка после подтверждения: ${formatPrice(item.breakEvenPriceUsd)}`,
-    `Trailing-stop после подтвержденного TP1: ${item.trailingStopPercent.toFixed(2)}% (ориентир ${formatPrice(item.trailingStopAfterTp1Usd)})`,
+    `Текущая цена: ${formatValue(item.price, q)}`,
+    `Зона входа: ${formatValue(item.entryFrom, q)} - ${formatValue(item.entryTo, q)}`,
+    `Начальный stop-loss: ${formatValue(item.initialStopLoss, q)} (-${item.riskPercent.toFixed(2)}%)`,
+    `TP1: ${formatValue(item.tp1, q)} (${formatPercent(item.tp1Percent)}) | R/R 1:${item.riskRewardTp1.toFixed(2)}`,
+    `TP2: ${formatValue(item.tp2, q)} (${formatPercent(item.tp2Percent)}) | R/R 1:${item.riskRewardTp2.toFixed(2)}`,
+    `TP3: ${formatValue(item.tp3, q)} (${formatPercent(item.tp3Percent)}) | R/R 1:${item.riskRewardTp3.toFixed(2)}`,
+    `Break-even только после подтверждения: ${formatValue(item.breakEvenActivationPrice, q)}`,
+    `Цена безубытка после подтверждения: ${formatValue(item.breakEvenPrice, q)}`,
+    `Trailing-stop после подтвержденного TP1: ${item.trailingStopPercent.toFixed(2)}% (ориентир ${formatValue(item.trailingStopAfterTp1, q)})`,
     `Room до ближайшего сопротивления: ${formatPercent(item.roomToResistancePercent)} | ATR 1H: ${formatPercent(item.atr1hPercent)}`,
-    `Сопротивление 1: ${item.nearestResistanceUsd ? formatPrice(item.nearestResistanceUsd) : "n/a"} | Сопротивление 2: ${item.nextResistanceUsd ? formatPrice(item.nextResistanceUsd) : "n/a"}`,
-    `Поддержка: ${item.nearestSupportUsd ? formatPrice(item.nearestSupportUsd) : "n/a"}`,
+    `Сопротивление 1: ${item.nearestResistance !== null ? formatValue(item.nearestResistance, q) : "n/a"} | Сопротивление 2: ${item.nextResistance !== null ? formatValue(item.nextResistance, q) : "n/a"}`,
+    `Поддержка: ${item.nearestSupport !== null ? formatValue(item.nearestSupport, q) : "n/a"}`,
     `30д: ${formatPercent(item.change30d)} | 24ч: ${formatPercent(item.change24h)}`,
     `Тренд 30д: ${item.trend30d} | RSI: ${item.rsi14 !== null ? item.rsi14.toFixed(2) : "n/a"}`,
     `Score: ${item.score.toFixed(2)}`,
@@ -58,8 +100,7 @@ export function registerBuyHandler(bot: Telegraf) {
       const result = await getBuyScanResult(10);
 
       const summaryLines = [
-        `- Всего USDT-рынков на Pionex: ${result.summary.totalMarketsOnPionex}`,
-        `- Поддерживается ботом: ${result.summary.supportedMarkets}`,
+        `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
         `- Попытка проверки: ${result.summary.totalChecked}`,
         `- Успешно проанализировано: ${result.summary.analyzedMarkets}`,
         `- Ошибок анализа: ${result.summary.failedMarkets}`,
@@ -73,19 +114,27 @@ export function registerBuyHandler(bot: Telegraf) {
         `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
       ];
 
-      if (result.summary.failedSymbolsSample.length) {
-        summaryLines.push(
-          `- Примеры рынков с ошибкой: ${result.summary.failedSymbolsSample.join(", ")}`
-        );
-      }
+      const failedBlock = buildFailedMarketsBlock(result.summary.failedDetails);
 
       if (!result.buys.length) {
         const message = [
           "⚪ Сейчас покупать нечего.",
+          "",
           "Что происходит на рынке:",
           ...summaryLines,
           "",
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
+          "",
+          "Какие рынки не удалось проверить и почему:",
+          failedBlock,
+          "",
+          "Что исправлено в новой логике:",
+          "- теперь сканируются все spot-рынки Pionex, а не только USDT",
+          "- статистика считается из одного и того же набора рынков",
+          "- Попытка проверки = Всего рынков",
+          "- Успешно проанализировано + Ошибок анализа = Попытка проверки",
+          "- BUY + HOLD + SELL = Успешно проанализировано",
+          "- BULLISH + SIDEWAYS + BEARISH = Успешно проанализировано",
         ].join("\n");
 
         await ctx.reply(message);
@@ -96,8 +145,12 @@ export function registerBuyHandler(bot: Telegraf) {
 
       const message = [
         "🟢 Пары с подтвержденным сигналом BUY",
+        "",
         "Сводка сканирования:",
         ...summaryLines,
+        "",
+        "Какие рынки не удалось проверить и почему:",
+        failedBlock,
         "",
         ...lines,
       ].join("\n\n");

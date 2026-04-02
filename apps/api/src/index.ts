@@ -68,7 +68,7 @@ type MarketListItem = {
   symbol: string;
   name: string;
   pair: string;
-  priceUsd: number;
+  priceUsd: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -209,7 +209,9 @@ app.get("/api/markets/:symbol", async (req, res) => {
         evaluation ?? {
           pair: market.pair.display,
           symbol: market.asset.symbol,
+          quoteSymbol: market.pair.quoteSymbol,
           name: market.asset.name,
+          price: market.spot.price,
           priceUsd: market.spot.priceUsd,
           change24h: market.spot.change24h,
           change30d: market.technicals.change30d,
@@ -222,10 +224,24 @@ app.get("/api/markets/:symbol", async (req, res) => {
           rangePosition: null,
           pullbackFromHigh: null,
           score: 0,
-          signal: "HOLD",
+          signal: "HOLD" as const,
           reason: "Недостаточно данных для полного deterministic signal.",
           positives: [],
-          negatives: []
+          negatives: [],
+          regimeScore: 0,
+          setupScore: 0,
+          spaceScore: 0,
+          executionScore: 0,
+          atr1h: null,
+          atr1hPercent: null,
+          nearestResistance: market.technicals.structure.nearestResistance,
+          nextResistance: market.technicals.structure.nextResistance,
+          nearestSupport: market.technicals.structure.nearestSupport,
+          roomToResistancePercent: market.technicals.structure.roomToResistancePercent,
+          entryZoneLow: null,
+          entryZoneHigh: null,
+          breakEvenActivationPrice: null,
+          trailingAtrMultiplier: 1.25
         }
     });
   } catch (error) {

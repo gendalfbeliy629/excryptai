@@ -24,6 +24,8 @@ export type PionexCandle = {
 
 export type PionexTicker = {
   symbol: string;
+  baseSymbol: string;
+  quoteSymbol: string;
   open: number;
   close: number;
   high: number;
@@ -54,15 +56,21 @@ export type PionexDepth = {
   updateTime: number | null;
 };
 
+export type PionexSpotMarket = {
+  symbol: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+};
+
 const BASE_URL = "https://api.pionex.com/api/v1/market";
 const cache = new TTLCache<unknown>();
 
-function buildSymbol(baseSymbol: string, quoteSymbol = "USDT"): string {
-  return `${baseSymbol.trim().toUpperCase()}_${quoteSymbol.trim().toUpperCase()}`;
-}
-
 function cacheKey(parts: Array<string | number>): string {
   return parts.join(":");
+}
+
+function buildSymbol(baseSymbol: string, quoteSymbol: string): string {
+  return `${baseSymbol.trim().toUpperCase()}_${quoteSymbol.trim().toUpperCase()}`;
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -84,10 +92,21 @@ function normalizeTime(value: unknown): number | null {
   return parsed > 10_000_000_000 ? parsed : parsed * 1000;
 }
 
-function sumNotional(levels: PionexDepthLevel[], limit: number): number {
-  return levels
-    .slice(0, limit)
-    .reduce((acc, level) => acc + level.price * level.size, 0);
+function splitMarketSymbol(symbol: string): PionexSpotMarket | null {
+  if (typeof symbol !== "string") return null;
+
+  const parts = symbol.split("_");
+  if (parts.length !== 2) return null;
+
+  const [baseSymbol, quoteSymbol] = parts.map((item) => item.trim().toUpperCase());
+
+  if (!baseSymbol || !quoteSymbol) return null;
+
+  return {
+    symbol: `${baseSymbol}_${quoteSymbol}`,
+    baseSymbol,
+    quoteSymbol,
+  };
 }
 
 async function getCached<T>(
@@ -96,9 +115,7 @@ async function getCached<T>(
   fetcher: () => Promise<T>
 ): Promise<T> {
   const cached = cache.get(key);
-  if (cached) {
-    return cached as T;
-  }
+  if (cached) return cached as T;
 
   const value = await fetcher();
   cache.set(key, value, ttlMs);
@@ -116,6 +133,35 @@ function unwrapArrayPayload(payload: any, possibleKeys: string[]): any[] {
   if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload)) return payload;
   return [];
+}
+
+function mapTicker(row: any): PionexTicker | null {
+  const market = splitMarketSymbol(row?.symbol);
+  if (!market) return null;
+
+  const open = normalizeNumber(row?.open);
+  const close = normalizeNumber(row?.close);
+  const high = normalizeNumber(row?.high);
+  const low = normalizeNumber(row?.low);
+
+  if (open === null || close === null || high === null || low === null) {
+    return null;
+  }
+
+  return {
+    symbol: market.symbol,
+    baseSymbol: market.baseSymbol,
+    quoteSymbol: market.quoteSymbol,
+    open,
+    close,
+    high,
+    low,
+    volume: normalizeNumber(row?.volume) ?? 0,
+    amount: normalizeNumber(row?.amount) ?? 0,
+    count: normalizeNumber(row?.count),
+    changePercent24h: open > 0 ? ((close - open) / open) * 100 : null,
+    time: normalizeTime(row?.time),
+  };
 }
 
 function mapCandle(row: any): PionexCandle | null {
@@ -162,40 +208,17 @@ function mapCandle(row: any): PionexCandle | null {
   return { time, open, high, low, close, volume, amount };
 }
 
-function mapTicker(row: any): PionexTicker | null {
-  const symbol = typeof row?.symbol === "string" ? row.symbol : null;
-  const open = normalizeNumber(row?.open);
-  const close = normalizeNumber(row?.close);
-  const high = normalizeNumber(row?.high);
-  const low = normalizeNumber(row?.low);
-
-  if (!symbol || open === null || close === null || high === null || low === null) {
-    return null;
-  }
-
-  return {
-    symbol,
-    open,
-    close,
-    high,
-    low,
-    volume: normalizeNumber(row?.volume) ?? 0,
-    amount: normalizeNumber(row?.amount) ?? 0,
-    count: normalizeNumber(row?.count),
-    changePercent24h: open > 0 ? ((close - open) / open) * 100 : null,
-    time: normalizeTime(row?.time),
-  };
-}
-
 function mapDepthSide(side: any[]): PionexDepthLevel[] {
   return side
     .map((level) => {
       if (Array.isArray(level)) {
         const price = normalizeNumber(level[0]);
         const size = normalizeNumber(level[1]);
+
         if (price === null || size === null || price <= 0 || size <= 0) {
           return null;
         }
+
         return { price, size };
       }
 
@@ -213,6 +236,12 @@ function mapDepthSide(side: any[]): PionexDepthLevel[] {
     .filter((item): item is PionexDepthLevel => item !== null);
 }
 
+function sumNotional(levels: PionexDepthLevel[], limit: number): number {
+  return levels
+    .slice(0, limit)
+    .reduce((acc, level) => acc + level.price * level.size, 0);
+}
+
 export async function getAllPionexSpotTickers(): Promise<PionexTicker[]> {
   const key = cacheKey(["pionex", "tickers", "SPOT", "ALL"]);
 
@@ -225,27 +254,45 @@ export async function getAllPionexSpotTickers(): Promise<PionexTicker[]> {
     });
 
     const rows = unwrapArrayPayload(response.data, ["tickers"]);
+
     return rows
       .map((row) => mapTicker(row))
       .filter((item): item is PionexTicker => item !== null);
   });
 }
 
-export async function getPionexAvailableUsdtBaseSymbols(): Promise<string[]> {
+export async function getAllPionexSpotMarkets(): Promise<PionexSpotMarket[]> {
   const tickers = await getAllPionexSpotTickers();
 
-  const symbols = tickers
-    .map((ticker) => ticker.symbol)
-    .filter((symbol) => symbol.endsWith("_USDT"))
-    .map((symbol) => symbol.replace("_USDT", ""))
-    .filter((symbol) => /^[A-Z0-9]+$/.test(symbol));
+  return tickers.map((item) => ({
+    symbol: item.symbol,
+    baseSymbol: item.baseSymbol,
+    quoteSymbol: item.quoteSymbol,
+  }));
+}
 
-  return Array.from(new Set(symbols)).sort();
+export async function getPionexTicker(
+  baseSymbol: string,
+  quoteSymbol: string
+): Promise<PionexTicker> {
+  const symbol = buildSymbol(baseSymbol, quoteSymbol);
+  const key = cacheKey(["pionex", "ticker", symbol]);
+
+  return getCached(key, 10_000, async () => {
+    const tickers = await getAllPionexSpotTickers();
+    const ticker = tickers.find((item) => item.symbol === symbol);
+
+    if (!ticker) {
+      throw new Error(`Pionex returned empty ticker for ${symbol}`);
+    }
+
+    return ticker;
+  });
 }
 
 export async function getPionexKlines(
   baseSymbol: string,
-  quoteSymbol = "USDT",
+  quoteSymbol: string,
   interval: PionexInterval = "1D",
   limit = 100
 ): Promise<PionexCandle[]> {
@@ -271,28 +318,9 @@ export async function getPionexKlines(
   });
 }
 
-export async function getPionexTicker(
-  baseSymbol: string,
-  quoteSymbol = "USDT"
-): Promise<PionexTicker> {
-  const symbol = buildSymbol(baseSymbol, quoteSymbol);
-  const key = cacheKey(["pionex", "ticker", symbol]);
-
-  return getCached(key, 10_000, async () => {
-    const all = await getAllPionexSpotTickers();
-    const raw = all.find((item) => item.symbol === symbol);
-
-    if (!raw) {
-      throw new Error(`Pionex returned empty ticker for ${symbol}`);
-    }
-
-    return raw;
-  });
-}
-
 export async function getPionexBookTicker(
   baseSymbol: string,
-  quoteSymbol = "USDT"
+  quoteSymbol: string
 ): Promise<PionexBookTicker> {
   const symbol = buildSymbol(baseSymbol, quoteSymbol);
   const key = cacheKey(["pionex", "bookTicker", symbol]);
@@ -344,7 +372,7 @@ export async function getPionexBookTicker(
 
 export async function getPionexDepth(
   baseSymbol: string,
-  quoteSymbol = "USDT",
+  quoteSymbol: string,
   limit = 20
 ): Promise<PionexDepth> {
   const symbol = buildSymbol(baseSymbol, quoteSymbol);
@@ -377,7 +405,7 @@ export async function getPionexDepth(
 
 export function getOrderBookNotional(depth: PionexDepth, levels = 10) {
   return {
-    bidNotionalUsd: sumNotional(depth.bids, levels),
-    askNotionalUsd: sumNotional(depth.asks, levels),
+    bidNotional: sumNotional(depth.bids, levels),
+    askNotional: sumNotional(depth.asks, levels),
   };
 }

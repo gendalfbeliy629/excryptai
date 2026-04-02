@@ -8,6 +8,14 @@ function formatPrice(value: number): string {
   return value.toFixed(8);
 }
 
+function formatNullablePrice(value: number | null, quoteSymbol: string): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  return `${formatPrice(value)} ${quoteSymbol}`;
+}
+
 export function registerPriceHandler(bot: Telegraf) {
   bot.command("price", async (ctx) => {
     try {
@@ -20,7 +28,8 @@ export function registerPriceHandler(bot: Telegraf) {
       const lines = [
         `💰 ${market.asset.name} (${market.asset.symbol})`,
         `Пара: ${displayPair}`,
-        `Цена: ${formatPrice(market.spot.priceUsd)} ${market.pair.quoteSymbol}`,
+        `Цена: ${formatNullablePrice(market.spot.priceUsd, "USD")}`,
+        `Цена в котируемой валюте: ${formatPrice(market.spot.price)} ${market.pair.quoteSymbol}`,
         `Изменение 24ч: ${market.spot.change24h?.toFixed(2) ?? "n/a"}%`,
         `Изменение 30д: ${market.technicals.change30d?.toFixed(2) ?? "n/a"}%`,
         `Тренд 30д: ${market.technicals.trend30d}`,
@@ -46,7 +55,7 @@ export function registerPriceHandler(bot: Telegraf) {
         }`,
         `RSI(14): ${market.technicals.rsi14?.toFixed(2) ?? "n/a"}`,
         `TVL/ликвидность: ${
-          market.liquidity.totalTvlUsd
+          market.liquidity.totalTvlUsd !== null
             ? `$${market.liquidity.totalTvlUsd.toFixed(0)}`
             : "n/a"
         }`,

@@ -1,25 +1,26 @@
 import { buildMarketContext, TrendType } from "./market.service";
 import { evaluateMarketSignal } from "./signal.service";
-import { SYMBOL_TO_COINCAP_ID } from "../utils/symbols";
-import { getPionexAvailableUsdtBaseSymbols } from "./pionex.service";
+import { getAllPionexSpotMarkets, PionexSpotMarket } from "./pionex.service";
 
 export type BuyCandidate = {
   rank: number;
   pair: string;
   symbol: string;
+  quoteSymbol: string;
   name: string;
   exchange: "PIONEX";
-  priceUsd: number;
-  entryFromUsd: number;
-  entryToUsd: number;
-  initialStopLossUsd: number;
-  breakEvenActivationPriceUsd: number;
-  breakEvenPriceUsd: number;
+  price: number;
+  priceUsd: number | null;
+  entryFrom: number;
+  entryTo: number;
+  initialStopLoss: number;
+  breakEvenActivationPrice: number;
+  breakEvenPrice: number;
   trailingStopPercent: number;
-  trailingStopAfterTp1Usd: number;
-  tp1Usd: number;
-  tp2Usd: number;
-  tp3Usd: number;
+  trailingStopAfterTp1: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
   tp1Percent: number;
   tp2Percent: number;
   tp3Percent: number;
@@ -27,9 +28,9 @@ export type BuyCandidate = {
   riskRewardTp1: number;
   riskRewardTp2: number;
   riskRewardTp3: number;
-  nearestResistanceUsd: number | null;
-  nextResistanceUsd: number | null;
-  nearestSupportUsd: number | null;
+  nearestResistance: number | null;
+  nextResistance: number | null;
+  nearestSupport: number | null;
   roomToResistancePercent: number | null;
   atr1hPercent: number | null;
   change24h: number | null;
@@ -47,12 +48,24 @@ export type BuyCandidate = {
 type RawEvaluation = NonNullable<ReturnType<typeof evaluateMarketSignal>>;
 
 type ScanItemResult =
-  | { status: "ok"; symbol: string; evaluation: RawEvaluation }
-  | { status: "failed"; symbol: string; error: string };
+  | {
+      status: "ok";
+      market: PionexSpotMarket;
+      evaluation: RawEvaluation;
+    }
+  | {
+      status: "failed";
+      market: PionexSpotMarket;
+      error: string;
+    };
+
+export type FailedMarketDetail = {
+  pair: string;
+  reason: string;
+};
 
 export type BuyMarketSummary = {
-  totalMarketsOnPionex: number;
-  supportedMarkets: number;
+  totalSpotMarkets: number;
   totalChecked: number;
   analyzedMarkets: number;
   failedMarkets: number;
@@ -65,15 +78,13 @@ export type BuyMarketSummary = {
   avgChange30d: number | null;
   avgRsi14: number | null;
   explanation: string;
-  failedSymbolsSample: string[];
+  failedDetails: FailedMarketDetail[];
 };
 
 export type BuyScanResult = {
   buys: BuyCandidate[];
   summary: BuyMarketSummary;
 };
-
-const FALLBACK_CANDIDATE_SYMBOLS = Object.keys(SYMBOL_TO_COINCAP_ID);
 
 async function mapWithConcurrency<TInput, TOutput>(
   items: TInput[],
@@ -123,35 +134,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-async function getScanUniverse(): Promise<{
-  totalMarketsOnPionex: number;
-  supportedSymbols: string[];
-}> {
-  try {
-    const pionexSymbols = await getPionexAvailableUsdtBaseSymbols();
-    const supportedSymbols = pionexSymbols.filter(
-      (symbol) => Boolean(SYMBOL_TO_COINCAP_ID[symbol])
-    );
-
-    if (!supportedSymbols.length) {
-      return {
-        totalMarketsOnPionex: pionexSymbols.length,
-        supportedSymbols: FALLBACK_CANDIDATE_SYMBOLS,
-      };
-    }
-
-    return {
-      totalMarketsOnPionex: pionexSymbols.length,
-      supportedSymbols,
-    };
-  } catch (error) {
-    console.error("Failed to build Pionex scan universe:", error);
-
-    return {
-      totalMarketsOnPionex: FALLBACK_CANDIDATE_SYMBOLS.length,
-      supportedSymbols: FALLBACK_CANDIDATE_SYMBOLS,
-    };
+function normalizeErrorReason(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
+
+  return "Unknown scan error";
 }
 
 function buildTradePlan(
@@ -161,8 +149,10 @@ function buildTradePlan(
   | "rank"
   | "pair"
   | "symbol"
+  | "quoteSymbol"
   | "name"
   | "exchange"
+  | "price"
   | "priceUsd"
   | "change24h"
   | "change30d"
@@ -174,99 +164,96 @@ function buildTradePlan(
   | "positives"
   | "negatives"
 > {
-  const entryFromUsd = round(
-    Math.min(item.entryZoneLowUsd ?? item.priceUsd, item.entryZoneHighUsd ?? item.priceUsd)
+  const entryFrom = round(
+    Math.min(item.entryZoneLow ?? item.price, item.entryZoneHigh ?? item.price)
   );
-  const entryToUsd = round(
-    Math.max(item.entryZoneLowUsd ?? item.priceUsd, item.entryZoneHighUsd ?? item.priceUsd)
+  const entryTo = round(
+    Math.max(item.entryZoneLow ?? item.price, item.entryZoneHigh ?? item.price)
   );
-  const entryMidUsd = round((entryFromUsd + entryToUsd) / 2);
+  const entryMid = round((entryFrom + entryTo) / 2);
 
-  const atrUsd = item.atr1hUsd ?? item.priceUsd * 0.012;
-  const supportBase = item.nearestSupportUsd ?? entryFromUsd - atrUsd * 0.9;
-  const initialStopLossUsd = round(
-    Math.min(entryFromUsd - atrUsd * 0.25, supportBase - atrUsd * 0.2)
-  );
-
-  const riskPercent = Math.abs(percentDifference(entryMidUsd, initialStopLossUsd));
-  const riskDistanceUsd = Math.max(
-    entryMidUsd - initialStopLossUsd,
-    entryMidUsd * 0.01
+  const atr = item.atr1h ?? item.price * 0.012;
+  const supportBase = item.nearestSupport ?? entryFrom - atr * 0.9;
+  const initialStopLoss = round(
+    Math.min(entryFrom - atr * 0.25, supportBase - atr * 0.2)
   );
 
-  let tp1Usd =
-    item.nearestResistanceUsd !== null
-      ? item.nearestResistanceUsd - atrUsd * 0.18
-      : entryMidUsd + Math.max(atrUsd * 1.2, entryMidUsd * 0.012);
+  const riskPercent = Math.abs(percentDifference(entryMid, initialStopLoss));
+  const riskDistance = Math.max(entryMid - initialStopLoss, entryMid * 0.01);
 
-  const minTp1Usd = entryMidUsd * 1.012;
-  if (tp1Usd < minTp1Usd) {
-    tp1Usd = minTp1Usd;
+  let tp1 =
+    item.nearestResistance !== null
+      ? item.nearestResistance - atr * 0.18
+      : entryMid + Math.max(atr * 1.2, entryMid * 0.012);
+
+  const minTp1 = entryMid * 1.012;
+  if (tp1 < minTp1) {
+    tp1 = minTp1;
   }
 
-  let tp2Usd =
-    item.nextResistanceUsd !== null
-      ? item.nextResistanceUsd - atrUsd * 0.18
-      : entryMidUsd + Math.max(atrUsd * 2.4, riskDistanceUsd * 1.8);
+  let tp2 =
+    item.nextResistance !== null
+      ? item.nextResistance - atr * 0.18
+      : entryMid + Math.max(atr * 2.4, riskDistance * 1.8);
 
-  if (tp2Usd <= tp1Usd) {
-    tp2Usd = tp1Usd + Math.max(atrUsd * 0.9, riskDistanceUsd * 0.9);
+  if (tp2 <= tp1) {
+    tp2 = tp1 + Math.max(atr * 0.9, riskDistance * 0.9);
   }
 
-  let tp3Usd = Math.max(
-    tp2Usd + Math.max(atrUsd * 1.2, riskDistanceUsd * 1.1),
-    entryMidUsd + Math.max(atrUsd * 3.2, riskDistanceUsd * 2.4)
+  let tp3 = Math.max(
+    tp2 + Math.max(atr * 1.2, riskDistance * 1.1),
+    entryMid + Math.max(atr * 3.2, riskDistance * 2.4)
   );
 
-  tp1Usd = round(tp1Usd);
-  tp2Usd = round(tp2Usd);
-  tp3Usd = round(tp3Usd);
+  tp1 = round(tp1);
+  tp2 = round(tp2);
+  tp3 = round(tp3);
 
-  const tp1Percent = percentDifference(entryMidUsd, tp1Usd);
-  const tp2Percent = percentDifference(entryMidUsd, tp2Usd);
-  const tp3Percent = percentDifference(entryMidUsd, tp3Usd);
+  const tp1Percent = percentDifference(entryMid, tp1);
+  const tp2Percent = percentDifference(entryMid, tp2);
+  const tp3Percent = percentDifference(entryMid, tp3);
 
-  const denominator = Math.max(entryMidUsd - initialStopLossUsd, 0.00000001);
+  const denominator = Math.max(entryMid - initialStopLoss, 0.00000001);
 
-  const riskRewardTp1 = Number(((tp1Usd - entryMidUsd) / denominator).toFixed(2));
-  const riskRewardTp2 = Number(((tp2Usd - entryMidUsd) / denominator).toFixed(2));
-  const riskRewardTp3 = Number(((tp3Usd - entryMidUsd) / denominator).toFixed(2));
+  const riskRewardTp1 = Number(((tp1 - entryMid) / denominator).toFixed(2));
+  const riskRewardTp2 = Number(((tp2 - entryMid) / denominator).toFixed(2));
+  const riskRewardTp3 = Number(((tp3 - entryMid) / denominator).toFixed(2));
 
-  const breakEvenActivationPriceUsd = round(
-    Math.max(item.breakEvenActivationPriceUsd ?? tp1Usd, tp1Usd)
+  const breakEvenActivationPrice = round(
+    Math.max(item.breakEvenActivationPrice ?? tp1, tp1)
   );
-  const breakEvenPriceUsd = round(entryMidUsd * 1.002);
+  const breakEvenPrice = round(entryMid * 1.002);
 
   const atrPercent = item.atr1hPercent ?? 1.2;
   const trailingStopPercent = Number(
     clamp(atrPercent * item.trailingAtrMultiplier, 1.6, 4.8).toFixed(2)
   );
 
-  const trailingStopAfterTp1Usd = round(
-    Math.max(breakEvenPriceUsd, tp1Usd * (1 - trailingStopPercent / 100))
+  const trailingStopAfterTp1 = round(
+    Math.max(breakEvenPrice, tp1 * (1 - trailingStopPercent / 100))
   );
 
   const managementPlan = [
-    `Входить зоной ${entryFromUsd} - ${entryToUsd}, не брать цену выше верхней границы зоны`,
-    `Начальный стоп поставить на ${initialStopLossUsd}; если цена закрывает 1H ниже этого уровня, long-сценарий сломан`,
-    `TP1 (${tp1Usd}) специально консервативный: забрать 20-30% позиции и зафиксировать первый реальный плюс`,
-    `Переводить стоп в безубыток только после подтверждения: 1H закрытие выше TP1 или проход цены до ${breakEvenActivationPriceUsd}`,
-    `После подтвержденного TP1 стоп можно поднять в ${breakEvenPriceUsd}`,
-    `TP2 (${tp2Usd}) — основная цель, там можно закрыть еще 40-50% позиции`,
-    `Остаток вести к TP3 (${tp3Usd}) или по trailing-stop ${trailingStopPercent}% (ориентир ${trailingStopAfterTp1Usd})`,
+    `Входить зоной ${entryFrom} - ${entryTo}, не брать цену выше верхней границы зоны`,
+    `Начальный стоп поставить на ${initialStopLoss}; если цена закрывает 1H ниже этого уровня, long-сценарий сломан`,
+    `TP1 (${tp1}) специально консервативный: забрать 20-30% позиции и зафиксировать первый реальный плюс`,
+    `Переводить стоп в безубыток только после подтверждения: 1H закрытие выше TP1 или проход цены до ${breakEvenActivationPrice}`,
+    `После подтвержденного TP1 стоп можно поднять в ${breakEvenPrice}`,
+    `TP2 (${tp2}) — основная цель, там можно закрыть еще 40-50% позиции`,
+    `Остаток вести к TP3 (${tp3}) или по trailing-stop ${trailingStopPercent}% (ориентир ${trailingStopAfterTp1})`,
   ];
 
   return {
-    entryFromUsd,
-    entryToUsd,
-    initialStopLossUsd,
-    breakEvenActivationPriceUsd,
-    breakEvenPriceUsd,
+    entryFrom,
+    entryTo,
+    initialStopLoss,
+    breakEvenActivationPrice,
+    breakEvenPrice,
     trailingStopPercent,
-    trailingStopAfterTp1Usd,
-    tp1Usd,
-    tp2Usd,
-    tp3Usd,
+    trailingStopAfterTp1,
+    tp1,
+    tp2,
+    tp3,
     tp1Percent,
     tp2Percent,
     tp3Percent,
@@ -274,9 +261,9 @@ function buildTradePlan(
     riskRewardTp1,
     riskRewardTp2,
     riskRewardTp3,
-    nearestResistanceUsd: item.nearestResistanceUsd,
-    nextResistanceUsd: item.nextResistanceUsd,
-    nearestSupportUsd: item.nearestSupportUsd,
+    nearestResistance: item.nearestResistance,
+    nextResistance: item.nextResistance,
+    nearestSupport: item.nearestSupport,
     roomToResistancePercent: item.roomToResistancePercent,
     atr1hPercent: item.atr1hPercent,
     managementPlan,
@@ -318,18 +305,14 @@ function buildNoBuyExplanation(summary: BuyMarketSummary): string {
 
   if (!reasons.length) {
     reasons.push(
-      "монеты не проходят фильтры по room-to-resistance, 4H/1H структуре и качеству исполнения"
+      "рынки не проходят фильтры по room-to-resistance, 4H/1H структуре и качеству исполнения"
     );
   }
 
   return reasons.join(", ");
 }
 
-function toSummary(
-  scanResults: ScanItemResult[],
-  totalMarketsOnPionex: number,
-  supportedMarkets: number
-): BuyMarketSummary {
+function toSummary(scanResults: ScanItemResult[]): BuyMarketSummary {
   const analyzedItems = scanResults
     .filter(
       (item): item is Extract<ScanItemResult, { status: "ok" }> =>
@@ -357,9 +340,8 @@ function toSummary(
   ).length;
 
   const summary: BuyMarketSummary = {
-    totalMarketsOnPionex,
-    supportedMarkets,
-    totalChecked: supportedMarkets,
+    totalSpotMarkets: scanResults.length,
+    totalChecked: scanResults.length,
     analyzedMarkets: analyzedItems.length,
     failedMarkets: failedItems.length,
     buyCount,
@@ -371,55 +353,55 @@ function toSummary(
     avgChange30d: average(analyzedItems.map((item) => item.change30d)),
     avgRsi14: average(analyzedItems.map((item) => item.rsi14)),
     explanation: "",
-    failedSymbolsSample: failedItems.slice(0, 8).map((item) => item.symbol),
+    failedDetails: failedItems.map((item) => ({
+      pair: `${item.market.baseSymbol}/${item.market.quoteSymbol}`,
+      reason: item.error,
+    })),
   };
 
   summary.explanation = buildNoBuyExplanation(summary);
-
   return summary;
 }
 
 export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
-  const universe = await getScanUniverse();
+  const markets = await getAllPionexSpotMarkets();
 
   const scanResults = await mapWithConcurrency(
-    universe.supportedSymbols,
+    markets,
     3,
-    async (symbol): Promise<ScanItemResult> => {
+    async (market): Promise<ScanItemResult> => {
       try {
-        const market = await buildMarketContext(symbol);
-        const evaluation = evaluateMarketSignal(market);
+        const marketContext = await buildMarketContext(
+          market.baseSymbol,
+          market.quoteSymbol
+        );
+
+        const evaluation = evaluateMarketSignal(marketContext);
 
         if (!evaluation) {
           return {
             status: "failed",
-            symbol,
+            market,
             error: "Signal evaluation returned null",
           };
         }
 
         return {
           status: "ok",
-          symbol,
+          market,
           evaluation,
         };
       } catch (error) {
-        console.error(`Buy scan failed for ${symbol}:`, error);
-
         return {
           status: "failed",
-          symbol,
-          error: error instanceof Error ? error.message : "Unknown scan error",
+          market,
+          error: normalizeErrorReason(error),
         };
       }
     }
   );
 
-  const summary = toSummary(
-    scanResults,
-    universe.totalMarketsOnPionex,
-    universe.supportedSymbols.length
-  );
+  const summary = toSummary(scanResults);
 
   const buys: BuyCandidate[] = scanResults
     .filter(
@@ -436,8 +418,10 @@ export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
       rank: index + 1,
       pair: item.pair,
       symbol: item.symbol,
+      quoteSymbol: item.quoteSymbol,
       name: item.name,
       exchange: "PIONEX",
+      price: item.price,
       priceUsd: item.priceUsd,
       ...buildTradePlan(item),
       change24h: item.change24h,
