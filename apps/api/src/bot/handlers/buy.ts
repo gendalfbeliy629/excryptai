@@ -52,33 +52,40 @@ export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
       await ctx.reply(
-        "Сканирую рынок по Pionex и ищу только пары с подтвержденным BUY: 1D regime + 4H structure + 1H entry + room-to-resistance..."
+        "Сканирую весь доступный Pionex spot market и ищу только пары с подтвержденным BUY: 1D regime + 4H structure + 1H entry + room-to-resistance..."
       );
 
       const result = await getBuyScanResult(10);
 
+      const summaryLines = [
+        `- Всего USDT-рынков на Pionex: ${result.summary.totalMarketsOnPionex}`,
+        `- Поддерживается ботом: ${result.summary.supportedMarkets}`,
+        `- Попытка проверки: ${result.summary.totalChecked}`,
+        `- Успешно проанализировано: ${result.summary.analyzedMarkets}`,
+        `- Ошибок анализа: ${result.summary.failedMarkets}`,
+        `- BUY: ${result.summary.buyCount}`,
+        `- HOLD: ${result.summary.holdCount}`,
+        `- SELL: ${result.summary.sellCount}`,
+        `- BULLISH: ${result.summary.bullishCount}`,
+        `- SIDEWAYS: ${result.summary.sidewaysCount}`,
+        `- BEARISH: ${result.summary.bearishCount}`,
+        `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
+        `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
+      ];
+
+      if (result.summary.failedSymbolsSample.length) {
+        summaryLines.push(
+          `- Примеры рынков с ошибкой: ${result.summary.failedSymbolsSample.join(", ")}`
+        );
+      }
+
       if (!result.buys.length) {
         const message = [
           "⚪ Сейчас покупать нечего.",
-          "",
           "Что происходит на рынке:",
-          `- Проверено монет: ${result.summary.totalChecked}`,
-          `- BUY: ${result.summary.buyCount}`,
-          `- HOLD: ${result.summary.holdCount}`,
-          `- SELL: ${result.summary.sellCount}`,
-          `- BULLISH: ${result.summary.bullishCount}`,
-          `- SIDEWAYS: ${result.summary.sidewaysCount}`,
-          `- BEARISH: ${result.summary.bearishCount}`,
-          `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
-          `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
+          ...summaryLines,
           "",
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
-          "",
-          "Новая логика /buy:",
-          "- данные берутся с Pionex по spot market",
-          "- BUY дается только если есть место до ближайшего сопротивления",
-          "- TP1 теперь консервативный и должен брать реальную прибыль, а не красивую математику 1R",
-          "- безубыток включается только после подтверждения TP1, а не механически",
         ].join("\n");
 
         await ctx.reply(message);
@@ -89,16 +96,8 @@ export function registerBuyHandler(bot: Telegraf) {
 
       const message = [
         "🟢 Пары с подтвержденным сигналом BUY",
-        "",
-        "Новая архитектура /buy:",
-        "- источник market data: Pionex spot",
-        "- фильтры: 1D regime, 4H structure, 1H entry, room-to-resistance, execution quality",
-        "- TP1 ставится консервативно перед ближайшим сопротивлением",
-        "- TP2 — основная цель",
-        "- TP3 — расширенная цель / сопровождение остатка",
-        "- stop-loss ставится по invalidation, а не просто по проценту",
-        "- break-even переносится только после подтверждения движения",
-        "- список не является финансовой рекомендацией",
+        "Сводка сканирования:",
+        ...summaryLines,
         "",
         ...lines,
       ].join("\n\n");

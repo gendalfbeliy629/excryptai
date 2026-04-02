@@ -1,7 +1,16 @@
 import axios from "axios";
 import { TTLCache } from "../utils/cache";
 
-export type PionexInterval = "1M" | "5M" | "15M" | "30M" | "60M" | "4H" | "8H" | "12H" | "1D";
+export type PionexInterval =
+  | "1M"
+  | "5M"
+  | "15M"
+  | "30M"
+  | "60M"
+  | "4H"
+  | "8H"
+  | "12H"
+  | "1D";
 
 export type PionexCandle = {
   time: number;
@@ -76,10 +85,16 @@ function normalizeTime(value: unknown): number | null {
 }
 
 function sumNotional(levels: PionexDepthLevel[], limit: number): number {
-  return levels.slice(0, limit).reduce((acc, level) => acc + level.price * level.size, 0);
+  return levels
+    .slice(0, limit)
+    .reduce((acc, level) => acc + level.price * level.size, 0);
 }
 
-async function getCached<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T> {
+async function getCached<T>(
+  key: string,
+  ttlMs: number,
+  fetcher: () => Promise<T>
+): Promise<T> {
   const cached = cache.get(key);
   if (cached) {
     return cached as T;
@@ -113,7 +128,13 @@ function mapCandle(row: any): PionexCandle | null {
     const volume = normalizeNumber(row[5]) ?? 0;
     const amount = normalizeNumber(row[6]) ?? 0;
 
-    if (time === null || open === null || high === null || low === null || close === null) {
+    if (
+      time === null ||
+      open === null ||
+      high === null ||
+      low === null ||
+      close === null
+    ) {
       return null;
     }
 
@@ -128,11 +149,42 @@ function mapCandle(row: any): PionexCandle | null {
   const volume = normalizeNumber(row?.volume ?? row?.v) ?? 0;
   const amount = normalizeNumber(row?.amount ?? row?.quoteVolume ?? row?.q) ?? 0;
 
-  if (time === null || open === null || high === null || low === null || close === null) {
+  if (
+    time === null ||
+    open === null ||
+    high === null ||
+    low === null ||
+    close === null
+  ) {
     return null;
   }
 
   return { time, open, high, low, close, volume, amount };
+}
+
+function mapTicker(row: any): PionexTicker | null {
+  const symbol = typeof row?.symbol === "string" ? row.symbol : null;
+  const open = normalizeNumber(row?.open);
+  const close = normalizeNumber(row?.close);
+  const high = normalizeNumber(row?.high);
+  const low = normalizeNumber(row?.low);
+
+  if (!symbol || open === null || close === null || high === null || low === null) {
+    return null;
+  }
+
+  return {
+    symbol,
+    open,
+    close,
+    high,
+    low,
+    volume: normalizeNumber(row?.volume) ?? 0,
+    amount: normalizeNumber(row?.amount) ?? 0,
+    count: normalizeNumber(row?.count),
+    changePercent24h: open > 0 ? ((close - open) / open) * 100 : null,
+    time: normalizeTime(row?.time),
+  };
 }
 
 function mapDepthSide(side: any[]): PionexDepthLevel[] {
@@ -141,16 +193,54 @@ function mapDepthSide(side: any[]): PionexDepthLevel[] {
       if (Array.isArray(level)) {
         const price = normalizeNumber(level[0]);
         const size = normalizeNumber(level[1]);
-        if (price === null || size === null || price <= 0 || size <= 0) return null;
+        if (price === null || size === null || price <= 0 || size <= 0) {
+          return null;
+        }
         return { price, size };
       }
 
       const price = normalizeNumber(level?.price ?? level?.[0]);
-      const size = normalizeNumber(level?.size ?? level?.quantity ?? level?.qty ?? level?.[1]);
-      if (price === null || size === null || price <= 0 || size <= 0) return null;
+      const size = normalizeNumber(
+        level?.size ?? level?.quantity ?? level?.qty ?? level?.[1]
+      );
+
+      if (price === null || size === null || price <= 0 || size <= 0) {
+        return null;
+      }
+
       return { price, size };
     })
     .filter((item): item is PionexDepthLevel => item !== null);
+}
+
+export async function getAllPionexSpotTickers(): Promise<PionexTicker[]> {
+  const key = cacheKey(["pionex", "tickers", "SPOT", "ALL"]);
+
+  return getCached(key, 15_000, async () => {
+    const response = await axios.get(`${BASE_URL}/tickers`, {
+      params: {
+        type: "SPOT",
+      },
+      timeout: 12_000,
+    });
+
+    const rows = unwrapArrayPayload(response.data, ["tickers"]);
+    return rows
+      .map((row) => mapTicker(row))
+      .filter((item): item is PionexTicker => item !== null);
+  });
+}
+
+export async function getPionexAvailableUsdtBaseSymbols(): Promise<string[]> {
+  const tickers = await getAllPionexSpotTickers();
+
+  const symbols = tickers
+    .map((ticker) => ticker.symbol)
+    .filter((symbol) => symbol.endsWith("_USDT"))
+    .map((symbol) => symbol.replace("_USDT", ""))
+    .filter((symbol) => /^[A-Z0-9]+$/.test(symbol));
+
+  return Array.from(new Set(symbols)).sort();
 }
 
 export async function getPionexKlines(
@@ -167,9 +257,9 @@ export async function getPionexKlines(
       params: {
         symbol,
         interval,
-        limit: Math.max(1, Math.min(limit, 500))
+        limit: Math.max(1, Math.min(limit, 500)),
       },
-      timeout: 12_000
+      timeout: 12_000,
     });
 
     const rows = unwrapArrayPayload(response.data, ["klines", "items", "data"]);
@@ -189,44 +279,14 @@ export async function getPionexTicker(
   const key = cacheKey(["pionex", "ticker", symbol]);
 
   return getCached(key, 10_000, async () => {
-    const response = await axios.get(`${BASE_URL}/tickers`, {
-      params: {
-        symbol,
-        type: "SPOT"
-      },
-      timeout: 10_000
-    });
-
-    const rows = unwrapArrayPayload(response.data, ["tickers"]);
-    const raw = rows.find((item) => item?.symbol === symbol) ?? rows[0] ?? response.data?.data?.ticker;
+    const all = await getAllPionexSpotTickers();
+    const raw = all.find((item) => item.symbol === symbol);
 
     if (!raw) {
       throw new Error(`Pionex returned empty ticker for ${symbol}`);
     }
 
-    const open = normalizeNumber(raw.open);
-    const close = normalizeNumber(raw.close);
-    const high = normalizeNumber(raw.high);
-    const low = normalizeNumber(raw.low);
-
-    if (open === null || close === null || high === null || low === null || close <= 0) {
-      throw new Error(`Pionex returned invalid ticker for ${symbol}`);
-    }
-
-    const changePercent24h = open > 0 ? ((close - open) / open) * 100 : null;
-
-    return {
-      symbol,
-      open,
-      close,
-      high,
-      low,
-      volume: normalizeNumber(raw.volume) ?? 0,
-      amount: normalizeNumber(raw.amount) ?? 0,
-      count: normalizeNumber(raw.count),
-      changePercent24h,
-      time: normalizeTime(raw.time)
-    };
+    return raw;
   });
 }
 
@@ -241,18 +301,26 @@ export async function getPionexBookTicker(
     const response = await axios.get(`${BASE_URL}/bookTickers`, {
       params: {
         symbol,
-        type: "SPOT"
+        type: "SPOT",
       },
-      timeout: 10_000
+      timeout: 10_000,
     });
 
-    const rows = unwrapArrayPayload(response.data, ["bookTickers", "tickers"]);
-    const raw = rows.find((item) => item?.symbol === symbol) ?? rows[0] ?? response.data?.data?.bookTicker;
+    const rows = unwrapArrayPayload(response.data, ["tickers", "bookTickers"]);
+    const raw =
+      rows.find((item) => item?.symbol === symbol) ??
+      rows[0] ??
+      response.data?.data?.ticker ??
+      response.data?.data?.bookTicker;
 
     const bidPrice = normalizeNumber(raw?.bidPrice ?? raw?.bid);
-    const bidSize = normalizeNumber(raw?.bidSize ?? raw?.bidQty ?? raw?.bidQuantity);
+    const bidSize = normalizeNumber(
+      raw?.bidSize ?? raw?.bidQty ?? raw?.bidQuantity
+    );
     const askPrice = normalizeNumber(raw?.askPrice ?? raw?.ask);
-    const askSize = normalizeNumber(raw?.askSize ?? raw?.askQty ?? raw?.askQuantity);
+    const askSize = normalizeNumber(
+      raw?.askSize ?? raw?.askQty ?? raw?.askQuantity
+    );
 
     if (
       bidPrice === null ||
@@ -269,7 +337,7 @@ export async function getPionexBookTicker(
       bidPrice,
       bidSize: bidSize ?? 0,
       askPrice,
-      askSize: askSize ?? 0
+      askSize: askSize ?? 0,
     };
   });
 }
@@ -286,9 +354,9 @@ export async function getPionexDepth(
     const response = await axios.get(`${BASE_URL}/depth`, {
       params: {
         symbol,
-        limit: Math.max(5, Math.min(limit, 200))
+        limit: Math.max(5, Math.min(limit, 200)),
       },
-      timeout: 10_000
+      timeout: 10_000,
     });
 
     const raw = response.data?.data ?? response.data;
@@ -302,7 +370,7 @@ export async function getPionexDepth(
     return {
       bids,
       asks,
-      updateTime: normalizeTime(raw?.updateTime)
+      updateTime: normalizeTime(raw?.updateTime),
     };
   });
 }
@@ -310,6 +378,6 @@ export async function getPionexDepth(
 export function getOrderBookNotional(depth: PionexDepth, levels = 10) {
   return {
     bidNotionalUsd: sumNotional(depth.bids, levels),
-    askNotionalUsd: sumNotional(depth.asks, levels)
+    askNotionalUsd: sumNotional(depth.asks, levels),
   };
 }
