@@ -1,5 +1,12 @@
 import { getSpotPrice } from "./coincap.service";
-import { getDailyOHLC, getPairPrice } from "./cryptocompare.service";
+import {
+  getOrderBookNotional,
+  getPionexBookTicker,
+  getPionexDepth,
+  getPionexKlines,
+  getPionexTicker,
+  PionexCandle,
+} from "./pionex.service";
 import { getLiquiditySnapshot } from "./defillama.service";
 import { getSentimentSnapshot } from "./santiment.service";
 import { normalizeSymbol } from "../utils/symbols";
@@ -42,11 +49,13 @@ export type MarketContext = {
     baseSymbol: string;
     quoteSymbol: string;
     display: string;
+    exchange: "PIONEX";
   };
   spot: {
     priceUsd: number;
     change24h: number | null;
     marketCapUsd: number | null;
+    source: string;
   };
   technicals: {
     period: "30d";
@@ -58,6 +67,45 @@ export type MarketContext = {
     sma30: number | null;
     trend30d: TrendType;
     candles: OHLCItem[];
+    intraday1h: {
+      candles: OHLCItem[];
+      rsi14: number | null;
+      ema20: number | null;
+      ema50: number | null;
+      atr14: number | null;
+      avgVolume20: number | null;
+      volumeRatio: number | null;
+      latestVolume: number | null;
+      recentSwingHigh: number | null;
+      recentSwingLow: number | null;
+    };
+    intraday4h: {
+      candles: OHLCItem[];
+      rsi14: number | null;
+      ema20: number | null;
+      ema50: number | null;
+      atr14: number | null;
+      avgVolume20: number | null;
+      volumeRatio: number | null;
+    };
+    structure: {
+      nearestResistanceUsd: number | null;
+      nextResistanceUsd: number | null;
+      nearestSupportUsd: number | null;
+      roomToResistancePercent: number | null;
+      pullbackFromResistancePercent: number | null;
+    };
+  };
+  execution: {
+    bestBidUsd: number | null;
+    bestAskUsd: number | null;
+    spreadPercent: number | null;
+    orderBookBidNotionalUsd: number | null;
+    orderBookAskNotionalUsd: number | null;
+    orderBookImbalance: number | null;
+    sellWallPressure: number | null;
+    buyWallPressure: number | null;
+    source: string;
   };
   liquidity: {
     totalTvlUsd: number | null;
@@ -113,6 +161,18 @@ export function parseMarketPair(rawInput?: string): ParsedPair {
   };
 }
 
+function toOHLC(candles: PionexCandle[]): OHLCItem[] {
+  return candles.map((row) => ({
+    time: row.time,
+    open: row.open,
+    high: row.high,
+    low: row.low,
+    close: row.close,
+    volumeFrom: row.volume,
+    volumeTo: row.amount
+  }));
+}
+
 function calculateRSI(closes: number[], period = 14): number | null {
   if (closes.length <= period) return null;
 
@@ -150,6 +210,46 @@ function calculateSMA(values: number[], period: number): number | null {
   return sum / period;
 }
 
+function calculateEMA(values: number[], period: number): number | null {
+  if (values.length < period) return null;
+
+  const multiplier = 2 / (period + 1);
+  let ema = values.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+
+  for (let i = period; i < values.length; i++) {
+    ema = values[i] * multiplier + ema * (1 - multiplier);
+  }
+
+  return ema;
+}
+
+function calculateATR(candles: OHLCItem[], period = 14): number | null {
+  if (candles.length <= period) return null;
+
+  const ranges: number[] = [];
+
+  for (let i = 1; i < candles.length; i++) {
+    const current = candles[i];
+    const previous = candles[i - 1];
+    const tr = Math.max(
+      current.high - current.low,
+      Math.abs(current.high - previous.close),
+      Math.abs(current.low - previous.close)
+    );
+    ranges.push(tr);
+  }
+
+  if (ranges.length < period) return null;
+
+  let atr = ranges.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+
+  for (let i = period; i < ranges.length; i++) {
+    atr = (atr * (period - 1) + ranges[i]) / period;
+  }
+
+  return atr;
+}
+
 function calculatePercentChange(start: number, end: number): number | null {
   if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0) {
     return null;
@@ -158,11 +258,7 @@ function calculatePercentChange(start: number, end: number): number | null {
   return ((end - start) / start) * 100;
 }
 
-function detectTrend(
-  closes: number[],
-  sma7: number | null,
-  sma30: number | null
-): TrendType {
+function detectTrend(closes: number[], sma7: number | null, sma30: number | null): TrendType {
   if (closes.length < 7 || sma7 === null || sma30 === null) {
     return "SIDEWAYS";
   }
@@ -171,126 +267,209 @@ function detectTrend(
   const firstClose = closes[0];
   const change = calculatePercentChange(firstClose, lastClose);
 
-  if (change === null) {
-    return "SIDEWAYS";
-  }
-
-  if (sma7 > sma30 && change > 3) {
-    return "BULLISH";
-  }
-
-  if (sma7 < sma30 && change < -3) {
-    return "BEARISH";
-  }
-
+  if (change === null) return "SIDEWAYS";
+  if (sma7 > sma30 && change > 3) return "BULLISH";
+  if (sma7 < sma30 && change < -3) return "BEARISH";
   return "SIDEWAYS";
 }
 
-function fallbackLiquidity(): MarketContext["liquidity"] {
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return values.reduce((acc, value) => acc + value, 0) / values.length;
+}
+
+function latestVolumeRatio(candles: OHLCItem[]): { latestVolume: number | null; avgVolume20: number | null; ratio: number | null } {
+  const volumes = candles.map((item) => item.volumeTo ?? item.volumeFrom ?? 0).filter((value) => value > 0);
+  if (!volumes.length) return { latestVolume: null, avgVolume20: null, ratio: null };
+  const latestVolume = volumes[volumes.length - 1] ?? null;
+  const avgVolume20 = average(volumes.slice(-21, -1));
+  const ratio = latestVolume !== null && avgVolume20 && avgVolume20 > 0 ? latestVolume / avgVolume20 : null;
+  return { latestVolume, avgVolume20, ratio };
+}
+
+function collectSwingHighs(candles: OHLCItem[], left = 2, right = 2): number[] {
+  const levels: number[] = [];
+  for (let i = left; i < candles.length - right; i++) {
+    const current = candles[i];
+    let isSwingHigh = true;
+    for (let j = i - left; j <= i + right; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= current.high) {
+        isSwingHigh = false;
+        break;
+      }
+    }
+    if (isSwingHigh) levels.push(current.high);
+  }
+  return levels;
+}
+
+function collectSwingLows(candles: OHLCItem[], left = 2, right = 2): number[] {
+  const levels: number[] = [];
+  for (let i = left; i < candles.length - right; i++) {
+    const current = candles[i];
+    let isSwingLow = true;
+    for (let j = i - left; j <= i + right; j++) {
+      if (j === i) continue;
+      if (candles[j].low <= current.low) {
+        isSwingLow = false;
+        break;
+      }
+    }
+    if (isSwingLow) levels.push(current.low);
+  }
+  return levels;
+}
+
+function selectResistanceLevels(price: number, candles1h: OHLCItem[], candles4h: OHLCItem[]) {
+  const merged = [...collectSwingHighs(candles1h), ...collectSwingHighs(candles4h)]
+    .filter((level) => level > price)
+    .sort((a, b) => a - b);
+
+  const deduped: number[] = [];
+  for (const level of merged) {
+    const last = deduped[deduped.length - 1];
+    if (!last || Math.abs(level - last) / last > 0.0035) {
+      deduped.push(level);
+    }
+  }
+
   return {
-    totalTvlUsd: null,
-    protocolsUsed: []
+    nearestResistanceUsd: deduped[0] ?? null,
+    nextResistanceUsd: deduped[1] ?? deduped[0] ?? null
   };
+}
+
+function selectSupport(price: number, candles1h: OHLCItem[], candles4h: OHLCItem[]) {
+  const merged = [...collectSwingLows(candles1h), ...collectSwingLows(candles4h)]
+    .filter((level) => level < price)
+    .sort((a, b) => b - a);
+
+  return merged[0] ?? null;
+}
+
+function fallbackLiquidity(): MarketContext["liquidity"] {
+  return { totalTvlUsd: null, protocolsUsed: [] };
 }
 
 function fallbackSentiment(): MarketContext["sentiment"] {
-  return {
-    socialVolumeTotal: null,
-    socialDominanceLatest: null
-  };
+  return { socialVolumeTotal: null, socialDominanceLatest: null };
 }
 
 export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
-  const spot = await getSpotPrice(symbolInput);
+  const baseSymbol = normalizeSymbol(symbolInput);
+  const [spot, ticker] = await Promise.all([
+    getSpotPrice(baseSymbol),
+    getPionexTicker(baseSymbol, "USDT").catch(() => null)
+  ]);
 
   return {
     symbol: spot.symbol,
     name: spot.name,
-    priceUsd: spot.priceUsd,
-    change24h: spot.changePercent24Hr,
+    priceUsd: ticker?.close ?? spot.priceUsd,
+    change24h: ticker?.changePercent24h ?? spot.changePercent24Hr,
     marketCapUsd: spot.marketCapUsd,
-    volume24hUsd: null,
-    source: "CoinCap"
+    volume24hUsd: ticker?.amount ?? null,
+    source: ticker ? "Pionex + CoinCap" : "CoinCap"
   };
 }
 
-export async function getOHLC(
-  symbolInput: string,
-  limit = 30,
-  quoteSymbolInput = "USDT"
-): Promise<OHLCItem[]> {
-  const candles = await getDailyOHLC(
-    symbolInput,
-    Math.max(limit, 30),
-    quoteSymbolInput
-  );
-
-  return candles.map((row) => ({
-    time: row.time,
-    open: row.open,
-    high: row.high,
-    low: row.low,
-    close: row.close,
-    volumeFrom: row.volumeFrom,
-    volumeTo: row.volumeTo
-  }));
+export async function getOHLC(symbolInput: string, limit = 30, quoteSymbolInput = "USDT"): Promise<OHLCItem[]> {
+  const baseSymbol = normalizeSymbol(symbolInput);
+  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
+  const candles = await getPionexKlines(baseSymbol, quoteSymbol, "1D", Math.max(limit, 30));
+  return toOHLC(candles);
 }
 
-export async function buildMarketContext(
-  symbolInput: string,
-  quoteSymbolInput = "USDT"
-): Promise<MarketContext> {
+export async function buildMarketContext(symbolInput: string, quoteSymbolInput = "USDT"): Promise<MarketContext> {
   const baseSymbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const assetSpot = await getSpotPrice(baseSymbol);
+  const assetSpotPromise = getSpotPrice(baseSymbol);
+  const tickerPromise = getPionexTicker(baseSymbol, quoteSymbol);
+  const bookTickerPromise = getPionexBookTicker(baseSymbol, quoteSymbol).catch(() => null);
+  const depthPromise = getPionexDepth(baseSymbol, quoteSymbol, 20).catch(() => null);
+  const dailyPromise = getPionexKlines(baseSymbol, quoteSymbol, "1D", 35).catch(() => []);
+  const candles1hPromise = getPionexKlines(baseSymbol, quoteSymbol, "60M", 120).catch(() => []);
+  const candles4hPromise = getPionexKlines(baseSymbol, quoteSymbol, "4H", 120).catch(() => []);
+  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() => fallbackLiquidity());
+  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() => fallbackSentiment());
 
-  const pairSpotPromise = getPairPrice(baseSymbol, quoteSymbol).catch((error) => {
-    console.warn(`Pair price fallback for ${baseSymbol}/${quoteSymbol}:`, error);
+  const [assetSpot, ticker, bookTicker, depth, dailyRaw, candles1hRaw, candles4hRaw, liquidity, sentiment] =
+    await Promise.all([
+      assetSpotPromise,
+      tickerPromise,
+      bookTickerPromise,
+      depthPromise,
+      dailyPromise,
+      candles1hPromise,
+      candles4hPromise,
+      liquidityPromise,
+      sentimentPromise
+    ]);
 
-    return {
-      fromSymbol: baseSymbol,
-      toSymbol: quoteSymbol,
-      price: assetSpot.priceUsd,
-      change24h: assetSpot.changePercent24Hr,
-      high24h: null,
-      low24h: null
-    };
-  });
+  const candles = toOHLC(dailyRaw);
+  const candles1h = toOHLC(candles1hRaw);
+  const candles4h = toOHLC(candles4hRaw);
 
-  const candlesPromise = getOHLC(baseSymbol, 30, quoteSymbol).catch((error) => {
-    console.warn(`OHLC fallback for ${baseSymbol}/${quoteSymbol}:`, error);
-    return [];
-  });
+  const dailyCloses = candles.map((c) => c.close);
+  const closes1h = candles1h.map((c) => c.close);
+  const closes4h = candles4h.map((c) => c.close);
 
-  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch((error) => {
-    console.warn(`Liquidity fallback for ${baseSymbol}:`, error);
-    return fallbackLiquidity();
-  });
+  const firstClose = dailyCloses[0];
+  const lastClose = dailyCloses[dailyCloses.length - 1];
 
-  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch((error) => {
-    console.warn(`Sentiment fallback for ${baseSymbol}:`, error);
-    return fallbackSentiment();
-  });
+  const sma7 = calculateSMA(dailyCloses, 7);
+  const sma30 = calculateSMA(dailyCloses, 30);
+  const change30d = firstClose && lastClose ? calculatePercentChange(firstClose, lastClose) : null;
+  const trend30d = detectTrend(dailyCloses, sma7, sma30);
 
-  const [pairSpot, candles, liquidity, sentiment] = await Promise.all([
-    pairSpotPromise,
-    candlesPromise,
-    liquidityPromise,
-    sentimentPromise
-  ]);
+  const ema20_1h = calculateEMA(closes1h, 20);
+  const ema50_1h = calculateEMA(closes1h, 50);
+  const atr14_1h = calculateATR(candles1h, 14);
+  const rsi14_1h = calculateRSI(closes1h, 14);
+  const volume1h = latestVolumeRatio(candles1h);
 
-  const highs = candles.map((c) => c.high).filter((v) => Number.isFinite(v));
-  const lows = candles.map((c) => c.low).filter((v) => Number.isFinite(v));
-  const closes = candles.map((c) => c.close).filter((v) => Number.isFinite(v));
+  const ema20_4h = calculateEMA(closes4h, 20);
+  const ema50_4h = calculateEMA(closes4h, 50);
+  const atr14_4h = calculateATR(candles4h, 14);
+  const rsi14_4h = calculateRSI(closes4h, 14);
+  const volume4h = latestVolumeRatio(candles4h);
 
-  const firstClose = closes[0];
-  const lastClose = closes[closes.length - 1];
+  const highs = candles.map((c) => c.high).filter(Number.isFinite);
+  const lows = candles.map((c) => c.low).filter(Number.isFinite);
+  const recentSwingHigh = candles1h.length ? Math.max(...candles1h.slice(-24).map((c) => c.high)) : null;
+  const recentSwingLow = candles1h.length ? Math.min(...candles1h.slice(-24).map((c) => c.low)) : null;
 
-  const sma7 = calculateSMA(closes, 7);
-  const sma30 = calculateSMA(closes, 30);
-  const change30d = calculatePercentChange(firstClose, lastClose);
-  const trend30d = detectTrend(closes, sma7, sma30);
+  const resistanceLevels = selectResistanceLevels(ticker.close, candles1h.slice(0, -2), candles4h.slice(0, -1));
+  const nearestSupportUsd = selectSupport(ticker.close, candles1h.slice(0, -1), candles4h.slice(0, -1));
+  const roomToResistancePercent = resistanceLevels.nearestResistanceUsd
+    ? calculatePercentChange(ticker.close, resistanceLevels.nearestResistanceUsd)
+    : null;
+  const pullbackFromResistancePercent = resistanceLevels.nearestResistanceUsd
+    ? calculatePercentChange(resistanceLevels.nearestResistanceUsd, ticker.close)
+    : null;
+
+  const book = bookTicker ?? {
+    bidPrice: ticker.close,
+    bidSize: 0,
+    askPrice: ticker.close,
+    askSize: 0,
+    symbol: `${baseSymbol}_${quoteSymbol}`
+  };
+
+  const spreadPercent = book.askPrice > 0 ? ((book.askPrice - book.bidPrice) / book.askPrice) * 100 : null;
+  const notionals = depth ? getOrderBookNotional(depth, 10) : { bidNotionalUsd: null, askNotionalUsd: null };
+  const totalNotional = (notionals.bidNotionalUsd ?? 0) + (notionals.askNotionalUsd ?? 0);
+  const orderBookImbalance = totalNotional > 0
+    ? ((notionals.bidNotionalUsd ?? 0) - (notionals.askNotionalUsd ?? 0)) / totalNotional
+    : null;
+  const sellWallPressure = notionals.askNotionalUsd && notionals.bidNotionalUsd
+    ? notionals.askNotionalUsd / Math.max(notionals.bidNotionalUsd, 1)
+    : null;
+  const buyWallPressure = notionals.askNotionalUsd && notionals.bidNotionalUsd
+    ? notionals.bidNotionalUsd / Math.max(notionals.askNotionalUsd, 1)
+    : null;
 
   return {
     asset: {
@@ -301,23 +480,64 @@ export async function buildMarketContext(
     pair: {
       baseSymbol,
       quoteSymbol,
-      display: `${baseSymbol}/${quoteSymbol}`
+      display: `${baseSymbol}/${quoteSymbol}`,
+      exchange: "PIONEX"
     },
     spot: {
-      priceUsd: pairSpot.price,
-      change24h: pairSpot.change24h,
-      marketCapUsd: assetSpot.marketCapUsd
+      priceUsd: ticker.close,
+      change24h: ticker.changePercent24h,
+      marketCapUsd: assetSpot.marketCapUsd,
+      source: "Pionex"
     },
     technicals: {
       period: "30d",
       high30d: highs.length ? Math.max(...highs) : null,
       low30d: lows.length ? Math.min(...lows) : null,
       change30d,
-      rsi14: calculateRSI(closes, 14),
+      rsi14: calculateRSI(dailyCloses, 14),
       sma7,
       sma30,
       trend30d,
-      candles
+      candles,
+      intraday1h: {
+        candles: candles1h,
+        rsi14: rsi14_1h,
+        ema20: ema20_1h,
+        ema50: ema50_1h,
+        atr14: atr14_1h,
+        avgVolume20: volume1h.avgVolume20,
+        volumeRatio: volume1h.ratio,
+        latestVolume: volume1h.latestVolume,
+        recentSwingHigh,
+        recentSwingLow
+      },
+      intraday4h: {
+        candles: candles4h,
+        rsi14: rsi14_4h,
+        ema20: ema20_4h,
+        ema50: ema50_4h,
+        atr14: atr14_4h,
+        avgVolume20: volume4h.avgVolume20,
+        volumeRatio: volume4h.ratio
+      },
+      structure: {
+        nearestResistanceUsd: resistanceLevels.nearestResistanceUsd,
+        nextResistanceUsd: resistanceLevels.nextResistanceUsd,
+        nearestSupportUsd,
+        roomToResistancePercent,
+        pullbackFromResistancePercent
+      }
+    },
+    execution: {
+      bestBidUsd: book.bidPrice,
+      bestAskUsd: book.askPrice,
+      spreadPercent,
+      orderBookBidNotionalUsd: notionals.bidNotionalUsd,
+      orderBookAskNotionalUsd: notionals.askNotionalUsd,
+      orderBookImbalance,
+      sellWallPressure,
+      buyWallPressure,
+      source: "Pionex"
     },
     liquidity,
     sentiment
@@ -328,10 +548,6 @@ export async function getMarketData(symbol: string) {
   return getCoinInfo(symbol);
 }
 
-export async function getCandles(
-  symbol: string,
-  limit = 30,
-  quoteSymbolInput = "USDT"
-) {
+export async function getCandles(symbol: string, limit = 30, quoteSymbolInput = "USDT") {
   return getOHLC(symbol, limit, quoteSymbolInput);
 }

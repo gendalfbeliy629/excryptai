@@ -22,6 +22,20 @@ export type SignalEvaluation = {
   reason: string;
   positives: string[];
   negatives: string[];
+  regimeScore: number;
+  setupScore: number;
+  spaceScore: number;
+  executionScore: number;
+  atr1hUsd: number | null;
+  atr1hPercent: number | null;
+  nearestResistanceUsd: number | null;
+  nextResistanceUsd: number | null;
+  nearestSupportUsd: number | null;
+  roomToResistancePercent: number | null;
+  entryZoneLowUsd: number | null;
+  entryZoneHighUsd: number | null;
+  breakEvenActivationPriceUsd: number | null;
+  trailingAtrMultiplier: number;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -32,496 +46,243 @@ function round(value: number): number {
   return Number(value.toFixed(2));
 }
 
-function getRangePosition(
-  price: number,
-  low: number | null,
-  high: number | null
-): number | null {
-  if (
-    low === null ||
-    high === null ||
-    !Number.isFinite(low) ||
-    !Number.isFinite(high) ||
-    high <= low
-  ) {
+function getRangePosition(price: number, low: number | null, high: number | null): number | null {
+  if (low === null || high === null || !Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
     return null;
   }
 
-  const pos = ((price - low) / (high - low)) * 100;
-  return clamp(pos, 0, 100);
+  return clamp(((price - low) / (high - low)) * 100, 0, 100);
 }
 
-function getPullbackFromHigh(
-  price: number,
-  high: number | null
-): number | null {
-  if (
-    high === null ||
-    !Number.isFinite(high) ||
-    high <= 0 ||
-    !Number.isFinite(price) ||
-    price <= 0
-  ) {
+function getPullbackFromHigh(price: number, high: number | null): number | null {
+  if (high === null || !Number.isFinite(high) || high <= 0 || price <= 0) {
     return null;
   }
 
   return ((high - price) / high) * 100;
 }
 
-function scoreTrend(trend: TrendType): number {
-  if (trend === "BULLISH") return 24;
-  if (trend === "SIDEWAYS") return 0;
-  return -24;
-}
-
-function scoreChange30d(change30d: number | null): number {
-  if (change30d === null || !Number.isFinite(change30d)) return 0;
-
-  if (change30d >= 6 && change30d <= 25) return 18;
-  if (change30d > 25 && change30d <= 45) return 10;
-  if (change30d >= 2 && change30d < 6) return 8;
-  if (change30d >= 0 && change30d < 2) return 2;
-  if (change30d > -6 && change30d < 0) return -6;
-  if (change30d <= -20) return -20;
-
-  return -12;
-}
-
-function scoreRsi(rsi: number | null): number {
-  if (rsi === null || !Number.isFinite(rsi)) return 0;
-
-  if (rsi >= 46 && rsi <= 62) return 16;
-  if (rsi >= 40 && rsi < 46) return 8;
-  if (rsi > 62 && rsi <= 68) return 4;
-  if (rsi > 68 && rsi <= 75) return -12;
-  if (rsi < 35) return -8;
-
-  return 0;
-}
-
-function scoreRangePosition(position: number | null): number {
-  if (position === null || !Number.isFinite(position)) return 0;
-
-  if (position >= 25 && position <= 60) return 12;
-  if (position > 60 && position <= 75) return 6;
-  if (position >= 15 && position < 25) return 5;
-  if (position > 85) return -12;
-  if (position < 10) return -8;
-
-  return 0;
-}
-
-function scorePullback(pullbackFromHigh: number | null): number {
-  if (
-    pullbackFromHigh === null ||
-    !Number.isFinite(pullbackFromHigh)
-  ) {
-    return 0;
-  }
-
-  if (pullbackFromHigh >= 5 && pullbackFromHigh <= 15) return 8;
-  if (pullbackFromHigh > 15 && pullbackFromHigh <= 25) return 4;
-  if (pullbackFromHigh >= 0 && pullbackFromHigh < 3) return -6;
-  if (pullbackFromHigh > 30) return -6;
-
-  return 0;
-}
-
-function scoreSmaPosition(price: number, sma30: number | null): number {
-  if (sma30 === null || !Number.isFinite(sma30) || sma30 <= 0) return 0;
-
-  if (price > sma30) return 8;
-  if (price === sma30) return 1;
-  return -8;
-}
-
-function scoreLiquidity(totalTvlUsd: number | null): number {
-  if (
-    totalTvlUsd === null ||
-    !Number.isFinite(totalTvlUsd) ||
-    totalTvlUsd <= 0
-  ) {
-    return 0;
-  }
-
-  if (totalTvlUsd >= 10_000_000_000) return 8;
-  if (totalTvlUsd >= 1_000_000_000) return 6;
-  if (totalTvlUsd >= 100_000_000) return 4;
-  return 2;
-}
-
-function scoreSentiment(
-  socialVolumeTotal: number | null,
-  socialDominanceLatest: number | null
-): number {
-  let score = 0;
-
-  if (
-    socialVolumeTotal !== null &&
-    Number.isFinite(socialVolumeTotal) &&
-    socialVolumeTotal > 0
-  ) {
-    score += 2;
-  }
-
-  if (
-    socialDominanceLatest !== null &&
-    Number.isFinite(socialDominanceLatest) &&
-    socialDominanceLatest > 0
-  ) {
-    score += 2;
-  }
-
-  return score;
-}
-
-function buildPositives(params: {
-  trend30d: TrendType;
-  change30d: number | null;
-  rsi14: number | null;
-  rangePosition: number | null;
-  pullbackFromHigh: number | null;
-  priceUsd: number;
-  sma30: number | null;
-  totalTvlUsd: number | null;
-  socialVolumeTotal: number | null;
-  socialDominanceLatest: number | null;
-}): string[] {
-  const positives: string[] = [];
-
-  if (params.trend30d === "BULLISH") {
-    positives.push("бычий тренд за 30 дней");
-  }
-
-  if (
-    params.change30d !== null &&
-    Number.isFinite(params.change30d) &&
-    params.change30d >= 6 &&
-    params.change30d <= 25
-  ) {
-    positives.push("здоровый рост за месяц");
-  }
-
-  if (
-    params.rsi14 !== null &&
-    Number.isFinite(params.rsi14) &&
-    params.rsi14 >= 46 &&
-    params.rsi14 <= 62
-  ) {
-    positives.push("RSI в комфортной зоне");
-  }
-
-  if (
-    params.rangePosition !== null &&
-    Number.isFinite(params.rangePosition) &&
-    params.rangePosition >= 25 &&
-    params.rangePosition <= 60
-  ) {
-    positives.push("цена не перегрета внутри диапазона 30д");
-  }
-
-  if (
-    params.pullbackFromHigh !== null &&
-    Number.isFinite(params.pullbackFromHigh) &&
-    params.pullbackFromHigh >= 5 &&
-    params.pullbackFromHigh <= 15
-  ) {
-    positives.push("есть умеренный откат от high 30д");
-  }
-
-  if (
-    params.sma30 !== null &&
-    Number.isFinite(params.sma30) &&
-    params.priceUsd > params.sma30
-  ) {
-    positives.push("цена выше SMA30");
-  }
-
-  if (
-    params.totalTvlUsd !== null &&
-    Number.isFinite(params.totalTvlUsd) &&
-    params.totalTvlUsd > 0
-  ) {
-    positives.push("есть подтверждение ликвидностью");
-  }
-
-  if (
-    (params.socialVolumeTotal !== null &&
-      Number.isFinite(params.socialVolumeTotal) &&
-      params.socialVolumeTotal > 0) ||
-    (params.socialDominanceLatest !== null &&
-      Number.isFinite(params.socialDominanceLatest) &&
-      params.socialDominanceLatest > 0)
-  ) {
-    positives.push("есть признаки рыночного внимания");
-  }
-
-  return positives;
-}
-
-function buildNegatives(params: {
-  trend30d: TrendType;
-  change24h: number | null;
-  change30d: number | null;
-  rsi14: number | null;
-  rangePosition: number | null;
-  priceUsd: number;
-  sma30: number | null;
-  totalTvlUsd: number | null;
-  socialVolumeTotal: number | null;
-  socialDominanceLatest: number | null;
-}): string[] {
-  const negatives: string[] = [];
-
-  if (params.trend30d === "SIDEWAYS") {
-    negatives.push("тренд за 30 дней боковой");
-  }
-
-  if (params.trend30d === "BEARISH") {
-    negatives.push("тренд за 30 дней медвежий");
-  }
-
-  if (
-    params.change30d !== null &&
-    Number.isFinite(params.change30d) &&
-    params.change30d > -2 &&
-    params.change30d < 5
-  ) {
-    negatives.push("месячный импульс слабый");
-  }
-
-  if (
-    params.rsi14 !== null &&
-    Number.isFinite(params.rsi14) &&
-    params.rsi14 > 68
-  ) {
-    negatives.push("RSI показывает перегретость");
-  }
-
-  if (
-    params.rangePosition !== null &&
-    Number.isFinite(params.rangePosition) &&
-    params.rangePosition > 85
-  ) {
-    negatives.push("цена близко к верхней границе диапазона 30д");
-  }
-
-  if (
-    params.sma30 !== null &&
-    Number.isFinite(params.sma30) &&
-    params.priceUsd < params.sma30
-  ) {
-    negatives.push("цена ниже SMA30");
-  }
-
-  if (
-    params.change24h !== null &&
-    Number.isFinite(params.change24h) &&
-    params.change24h < -8
-  ) {
-    negatives.push("сильная просадка за 24 часа");
-  }
-
-  const noLiquidity =
-    params.totalTvlUsd === null ||
-    !Number.isFinite(params.totalTvlUsd) ||
-    params.totalTvlUsd <= 0;
-
-  const noSentiment =
-    (params.socialVolumeTotal === null ||
-      !Number.isFinite(params.socialVolumeTotal) ||
-      params.socialVolumeTotal <= 0) &&
-    (params.socialDominanceLatest === null ||
-      !Number.isFinite(params.socialDominanceLatest) ||
-      params.socialDominanceLatest <= 0);
-
-  if (noLiquidity && noSentiment) {
-    negatives.push("нет подтверждения ликвидностью и sentiment");
-  }
-
-  return negatives;
-}
-
-function buildSignal(params: {
-  score: number;
-  trend30d: TrendType;
-  change30d: number | null;
-  rsi14: number | null;
-  rangePosition: number | null;
-  priceUsd: number;
-  sma30: number | null;
-}): DeterministicSignal {
-  const { score, trend30d, change30d, rsi14, rangePosition, priceUsd, sma30 } =
-    params;
-
-  const priceAboveSma30 =
-    sma30 === null || !Number.isFinite(sma30) || priceUsd >= sma30;
-
-  const strongBuy =
-    score >= 60 &&
-    trend30d === "BULLISH" &&
-    change30d !== null &&
-    Number.isFinite(change30d) &&
-    change30d >= 5 &&
-    (rsi14 === null || (rsi14 >= 45 && rsi14 <= 68)) &&
-    priceAboveSma30;
-
-  if (strongBuy) {
-    return "BUY";
-  }
-
-  const strongSellByTrend =
-    trend30d === "BEARISH" &&
-    change30d !== null &&
-    Number.isFinite(change30d) &&
-    change30d <= -6 &&
-    score < 35;
-
-  const strongSellByOverheat =
-    rsi14 !== null &&
-    Number.isFinite(rsi14) &&
-    rsi14 > 74 &&
-    rangePosition !== null &&
-    Number.isFinite(rangePosition) &&
-    rangePosition > 85;
-
-  if (strongSellByTrend || strongSellByOverheat) {
-    return "SELL";
-  }
-
-  return "HOLD";
-}
-
-function buildReason(signal: DeterministicSignal, positives: string[], negatives: string[]): string {
-  if (signal === "BUY") {
-    if (positives.length > 0) {
-      return positives.slice(0, 4).join(", ");
-    }
-
-    return "сигнал BUY получен по совокупности технических факторов";
-  }
-
-  if (signal === "SELL") {
-    if (negatives.length > 0) {
-      return negatives.slice(0, 4).join(", ");
-    }
-
-    return "сигнал SELL получен по совокупности технических факторов";
-  }
-
-  const parts = [...negatives.slice(0, 2), ...positives.slice(0, 2)];
-
-  if (parts.length > 0) {
-    return parts.join(", ");
-  }
-
-  return "данные смешанные, явного преимущества у BUY или SELL нет";
+function formatNumber(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return "n/a";
+  return value.toFixed(digits);
 }
 
 export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | null {
   const priceUsd = market.spot.priceUsd;
-  const change24h = market.spot.change24h;
-  const change30d = market.technicals.change30d;
-  const trend30d = market.technicals.trend30d;
-  const rsi14 = market.technicals.rsi14;
-  const high30d = market.technicals.high30d;
-  const low30d = market.technicals.low30d;
-  const sma7 = market.technicals.sma7;
-  const sma30 = market.technicals.sma30;
+  const daily = market.technicals;
+  const intraday1h = market.technicals.intraday1h;
+  const intraday4h = market.technicals.intraday4h;
+  const structure = market.technicals.structure;
+  const execution = market.execution;
 
-  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+  if (!priceUsd || priceUsd <= 0) {
     return null;
   }
 
-  const rangePosition = getRangePosition(priceUsd, low30d, high30d);
-  const pullbackFromHigh = getPullbackFromHigh(priceUsd, high30d);
+  const rangePosition = getRangePosition(priceUsd, daily.low30d, daily.high30d);
+  const pullbackFromHigh = getPullbackFromHigh(priceUsd, daily.high30d);
+  const atr1hUsd = intraday1h.atr14;
+  const atr1hPercent = atr1hUsd && priceUsd > 0 ? (atr1hUsd / priceUsd) * 100 : null;
 
-  let score = 0;
-  score += scoreTrend(trend30d);
-  score += scoreChange30d(change30d);
-  score += scoreRsi(rsi14);
-  score += scoreRangePosition(rangePosition);
-  score += scorePullback(pullbackFromHigh);
-  score += scoreSmaPosition(priceUsd, sma30);
-  score += scoreLiquidity(market.liquidity.totalTvlUsd);
-  score += scoreSentiment(
-    market.sentiment.socialVolumeTotal,
-    market.sentiment.socialDominanceLatest
-  );
+  const positives: string[] = [];
+  const negatives: string[] = [];
 
-  if (
-    change24h !== null &&
-    Number.isFinite(change24h) &&
-    change24h < -8
-  ) {
-    score -= 8;
+  let regimeScore = 0;
+  const regimeBullish =
+    daily.trend30d === "BULLISH" &&
+    daily.sma30 !== null &&
+    priceUsd > daily.sma30 &&
+    (daily.change30d ?? -999) >= 4;
+
+  if (regimeBullish) {
+    regimeScore += 28;
+    positives.push("дневной режим рынка бычий и цена держится выше SMA30");
+  } else if (daily.trend30d === "BEARISH") {
+    regimeScore -= 20;
+    negatives.push("дневной режим рынка медвежий");
+  } else {
+    regimeScore += 4;
+    negatives.push("дневной режим рынка не дает сильного трендового преимущества");
   }
 
-  if (
-    change24h !== null &&
-    Number.isFinite(change24h) &&
-    change24h > 10
-  ) {
-    score -= 4;
+  if (daily.rsi14 !== null) {
+    if (daily.rsi14 >= 48 && daily.rsi14 <= 64) {
+      regimeScore += 8;
+      positives.push("дневной RSI в здоровой зоне");
+    } else if (daily.rsi14 > 70) {
+      regimeScore -= 10;
+      negatives.push("дневной RSI перегрет");
+    } else if (daily.rsi14 < 42) {
+      regimeScore -= 6;
+      negatives.push("дневной RSI слабый для уверенного long");
+    }
   }
 
-  const finalScore = round(score);
+  let setupScore = 0;
+  const fourHourBullish =
+    intraday4h.ema20 !== null &&
+    intraday4h.ema50 !== null &&
+    intraday4h.ema20 > intraday4h.ema50 &&
+    priceUsd >= intraday4h.ema20;
 
-  const positives = buildPositives({
-    trend30d,
-    change30d,
-    rsi14,
-    rangePosition,
-    pullbackFromHigh,
-    priceUsd,
-    sma30,
-    totalTvlUsd: market.liquidity.totalTvlUsd,
-    socialVolumeTotal: market.sentiment.socialVolumeTotal,
-    socialDominanceLatest: market.sentiment.socialDominanceLatest,
-  });
+  if (fourHourBullish) {
+    setupScore += 18;
+    positives.push("4H структура поддерживает продолжение вверх");
+  } else {
+    setupScore -= 14;
+    negatives.push("4H структура не подтверждает сильный лонг-сетап");
+  }
 
-  const negatives = buildNegatives({
-    trend30d,
-    change24h,
-    change30d,
-    rsi14,
-    rangePosition,
-    priceUsd,
-    sma30,
-    totalTvlUsd: market.liquidity.totalTvlUsd,
-    socialVolumeTotal: market.sentiment.socialVolumeTotal,
-    socialDominanceLatest: market.sentiment.socialDominanceLatest,
-  });
+  const oneHourRsiOk = intraday1h.rsi14 !== null && intraday1h.rsi14 >= 48 && intraday1h.rsi14 <= 67;
+  if (oneHourRsiOk) {
+    setupScore += 8;
+    positives.push("1H RSI не перегрет и остается в рабочей зоне");
+  } else if (intraday1h.rsi14 !== null && intraday1h.rsi14 > 70) {
+    setupScore -= 10;
+    negatives.push("1H RSI перегрет возле входа");
+  } else {
+    setupScore -= 4;
+    negatives.push("1H RSI не дает чистого входного триггера");
+  }
 
-  const signal = buildSignal({
-    score: finalScore,
-    trend30d,
-    change30d,
-    rsi14,
-    rangePosition,
-    priceUsd,
-    sma30,
-  });
+  const volumeConfirmation = intraday1h.volumeRatio !== null && intraday1h.volumeRatio >= 1.08;
+  if (volumeConfirmation) {
+    setupScore += 8;
+    positives.push("1H объем не ниже среднего и поддерживает сценарий");
+  } else if (intraday1h.volumeRatio !== null && intraday1h.volumeRatio < 0.85) {
+    setupScore -= 6;
+    negatives.push("1H объем слабый, движение может быть пустым");
+  }
+
+  const pullbackToEma =
+    intraday1h.ema20 !== null &&
+    atr1hUsd !== null &&
+    Math.abs(priceUsd - intraday1h.ema20) <= atr1hUsd * 0.9;
+
+  if (pullbackToEma) {
+    setupScore += 8;
+    positives.push("цена стоит близко к 1H EMA20, вход не слишком растянут");
+  } else if (intraday1h.ema20 !== null && atr1hUsd !== null && priceUsd > intraday1h.ema20 + atr1hUsd * 1.5) {
+    setupScore -= 10;
+    negatives.push("цена слишком далеко убежала от 1H EMA20");
+  }
+
+  let spaceScore = 0;
+  const roomToResistancePercent = structure.roomToResistancePercent;
+  const minimumRoomPercent = Math.max(atr1hPercent !== null ? atr1hPercent * 1.2 : 0, 1.8);
+
+  if (roomToResistancePercent !== null && roomToResistancePercent >= minimumRoomPercent) {
+    spaceScore += 22;
+    positives.push("до ближайшего сопротивления есть рабочее пространство для TP1");
+  } else {
+    spaceScore -= 22;
+    negatives.push("ближайшее сопротивление слишком близко, TP1 может быть нереалистичным");
+  }
+
+  if (rangePosition !== null) {
+    if (rangePosition >= 35 && rangePosition <= 68) {
+      spaceScore += 6;
+      positives.push("цена находится в средней части диапазона, а не в зоне перегрева");
+    } else if (rangePosition > 80) {
+      spaceScore -= 10;
+      negatives.push("цена слишком высоко в 30-дневном диапазоне");
+    }
+  }
+
+  let executionScore = 0;
+  if (execution.spreadPercent !== null) {
+    if (execution.spreadPercent <= 0.15) {
+      executionScore += 6;
+      positives.push("спред узкий, исполнение выглядит комфортно");
+    } else if (execution.spreadPercent > 0.35) {
+      executionScore -= 8;
+      negatives.push("спред расширен, исполнение может быть некачественным");
+    }
+  }
+
+  if (execution.orderBookImbalance !== null) {
+    if (execution.orderBookImbalance >= 0.08) {
+      executionScore += 8;
+      positives.push("в стакане есть перевес bid-side");
+    } else if (execution.orderBookImbalance <= -0.08) {
+      executionScore -= 10;
+      negatives.push("в стакане перевес ask-side");
+    }
+  }
+
+  if (execution.sellWallPressure !== null && execution.sellWallPressure > 1.35) {
+    executionScore -= 8;
+    negatives.push("над ценой заметно давление sell wall");
+  }
+
+  if (market.sentiment.socialDominanceLatest !== null && market.sentiment.socialDominanceLatest > 12) {
+    executionScore -= 4;
+    negatives.push("социальное доминирование повышено, толпа может быть перегрета");
+  }
+
+  const rawScore = regimeScore + setupScore + spaceScore + executionScore + 50;
+  const score = clamp(round(rawScore), 0, 100);
+
+  const hardBearish = daily.trend30d === "BEARISH" && (daily.change30d ?? 0) < -5;
+  const buyAllowed = regimeBullish && fourHourBullish && roomToResistancePercent !== null && roomToResistancePercent >= minimumRoomPercent && score >= 68;
+
+  const signal: DeterministicSignal = hardBearish ? "SELL" : buyAllowed ? "BUY" : "HOLD";
+
+  const entryZoneLowUsd = intraday1h.ema20 !== null && atr1hUsd !== null
+    ? Math.max(priceUsd - atr1hUsd * 0.35, intraday1h.ema20 - atr1hUsd * 0.25)
+    : priceUsd * 0.995;
+  const entryZoneHighUsd = intraday1h.ema20 !== null && atr1hUsd !== null
+    ? Math.min(priceUsd, intraday1h.ema20 + atr1hUsd * 0.25)
+    : priceUsd;
+
+  const reason = signal === "BUY"
+    ? [
+        "buy разрешен только после проверки 1D режима, 4H структуры, 1H входа и пространства до сопротивления",
+        `room до ближайшего сопротивления: ${formatNumber(roomToResistancePercent)}%`,
+        `ATR 1H: ${formatNumber(atr1hPercent)}%`,
+        `объем 1H к среднему: ${formatNumber(intraday1h.volumeRatio)}`
+      ].join(", ")
+    : signal === "SELL"
+      ? "дневной режим рынка слабый, импульс отрицательный и long-сценарий ломается"
+      : [
+          "сигнал удержан в HOLD, потому что условия для качественного BUY не выполнены",
+          `room до сопротивления: ${formatNumber(roomToResistancePercent)}%`,
+          `минимально допустимо: ${formatNumber(minimumRoomPercent)}%`
+        ].join(", ");
 
   return {
     pair: market.pair.display,
     symbol: market.asset.symbol,
     name: market.asset.name,
     priceUsd,
-    change24h,
-    change30d,
-    trend30d,
-    rsi14,
-    high30d,
-    low30d,
-    sma7,
-    sma30,
+    change24h: market.spot.change24h,
+    change30d: daily.change30d,
+    trend30d: daily.trend30d,
+    rsi14: daily.rsi14,
+    high30d: daily.high30d,
+    low30d: daily.low30d,
+    sma7: daily.sma7,
+    sma30: daily.sma30,
     rangePosition,
     pullbackFromHigh,
-    score: finalScore,
+    score,
     signal,
-    reason: buildReason(signal, positives, negatives),
+    reason,
     positives,
     negatives,
+    regimeScore: round(regimeScore),
+    setupScore: round(setupScore),
+    spaceScore: round(spaceScore),
+    executionScore: round(executionScore),
+    atr1hUsd,
+    atr1hPercent,
+    nearestResistanceUsd: structure.nearestResistanceUsd,
+    nextResistanceUsd: structure.nextResistanceUsd,
+    nearestSupportUsd: structure.nearestSupportUsd,
+    roomToResistancePercent,
+    entryZoneLowUsd,
+    entryZoneHighUsd,
+    breakEvenActivationPriceUsd: atr1hUsd !== null ? priceUsd + atr1hUsd * 1.3 : priceUsd * 1.013,
+    trailingAtrMultiplier: 1.25,
   };
 }

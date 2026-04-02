@@ -7,28 +7,30 @@ export type BuyCandidate = {
   pair: string;
   symbol: string;
   name: string;
+  exchange: "PIONEX";
   priceUsd: number;
-
-  buyPriceUsd: number;
-
+  entryFromUsd: number;
+  entryToUsd: number;
   initialStopLossUsd: number;
+  breakEvenActivationPriceUsd: number;
   breakEvenPriceUsd: number;
-  trailingStopAfterTp1Usd: number;
   trailingStopPercent: number;
-
+  trailingStopAfterTp1Usd: number;
   tp1Usd: number;
   tp2Usd: number;
   tp3Usd: number;
-
   tp1Percent: number;
   tp2Percent: number;
   tp3Percent: number;
   riskPercent: number;
-
   riskRewardTp1: number;
   riskRewardTp2: number;
   riskRewardTp3: number;
-
+  nearestResistanceUsd: number | null;
+  nextResistanceUsd: number | null;
+  nearestSupportUsd: number | null;
+  roomToResistancePercent: number | null;
+  atr1hPercent: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: TrendType;
@@ -36,27 +38,12 @@ export type BuyCandidate = {
   score: number;
   signal: "BUY";
   reason: string;
+  positives: string[];
+  negatives: string[];
   managementPlan: string[];
 };
 
-type RawEvaluation = {
-  pair: string;
-  symbol: string;
-  name: string;
-  priceUsd: number;
-  change24h: number | null;
-  change30d: number | null;
-  trend30d: TrendType;
-  rsi14: number | null;
-  high30d: number | null;
-  low30d: number | null;
-  sma30: number | null;
-  rangePosition: number | null;
-  pullbackFromHigh: number | null;
-  score: number;
-  signal: "BUY" | "HOLD" | "SELL";
-  reason: string;
-};
+type RawEvaluation = ReturnType<typeof evaluateMarketSignal> extends infer T ? NonNullable<T> : never;
 
 export type BuyMarketSummary = {
   totalChecked: number;
@@ -93,28 +80,14 @@ async function mapWithConcurrency<TInput, TOutput>(
     }
   }
 
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => run())
-  );
-
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => run()));
   return results;
 }
 
 function average(values: Array<number | null>): number | null {
-  const filtered = values.filter(
-    (value): value is number => value !== null && Number.isFinite(value)
-  );
-
-  if (!filtered.length) {
-    return null;
-  }
-
-  const sum = filtered.reduce((acc, value) => acc + value, 0);
-  return sum / filtered.length;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+  const filtered = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!filtered.length) return null;
+  return filtered.reduce((acc, value) => acc + value, 0) / filtered.length;
 }
 
 function round(value: number): number {
@@ -125,237 +98,84 @@ function percentDifference(from: number, to: number): number {
   if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0) {
     return 0;
   }
-
   return Number((((to - from) / from) * 100).toFixed(2));
 }
 
-function buildTradePlan(item: {
-  priceUsd: number;
-  high30d: number | null;
-  low30d: number | null;
-  sma30: number | null;
-  rangePosition: number | null;
-  pullbackFromHigh: number | null;
-  change30d: number | null;
-}): {
-  buyPriceUsd: number;
-  initialStopLossUsd: number;
-  breakEvenPriceUsd: number;
-  trailingStopAfterTp1Usd: number;
-  trailingStopPercent: number;
-  tp1Usd: number;
-  tp2Usd: number;
-  tp3Usd: number;
-  tp1Percent: number;
-  tp2Percent: number;
-  tp3Percent: number;
-  riskPercent: number;
-  riskRewardTp1: number;
-  riskRewardTp2: number;
-  riskRewardTp3: number;
-  managementPlan: string[];
-} {
-  const {
-    priceUsd,
-    high30d,
-    low30d,
-    sma30,
-    rangePosition,
-    pullbackFromHigh,
-    change30d,
-  } = item;
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
-  let buyPriceUsd = priceUsd;
+function buildTradePlan(item: RawEvaluation): Omit<BuyCandidate, "rank" | "pair" | "symbol" | "name" | "exchange" | "priceUsd" | "change24h" | "change30d" | "trend30d" | "rsi14" | "score" | "signal" | "reason" | "positives" | "negatives"> {
+  const entryFromUsd = round(Math.min(item.entryZoneLowUsd ?? item.priceUsd, item.entryZoneHighUsd ?? item.priceUsd));
+  const entryToUsd = round(Math.max(item.entryZoneLowUsd ?? item.priceUsd, item.entryZoneHighUsd ?? item.priceUsd));
+  const entryMidUsd = round((entryFromUsd + entryToUsd) / 2);
 
-  if (
-    sma30 !== null &&
-    Number.isFinite(sma30) &&
-    sma30 > 0 &&
-    priceUsd > sma30
-  ) {
-    const premiumToSma = ((priceUsd - sma30) / sma30) * 100;
-    if (premiumToSma >= 3) {
-      buyPriceUsd = Math.min(priceUsd, sma30 * 1.02);
-    }
+  const atrUsd = item.atr1hUsd ?? item.priceUsd * 0.012;
+  const supportBase = item.nearestSupportUsd ?? entryFromUsd - atrUsd * 0.9;
+  const initialStopLossUsd = round(Math.min(entryFromUsd - atrUsd * 0.25, supportBase - atrUsd * 0.2));
+
+  const riskPercent = Math.abs(percentDifference(entryMidUsd, initialStopLossUsd));
+  const riskDistanceUsd = Math.max(entryMidUsd - initialStopLossUsd, entryMidUsd * 0.01);
+
+  let tp1Usd = item.nearestResistanceUsd !== null
+    ? item.nearestResistanceUsd - atrUsd * 0.18
+    : entryMidUsd + Math.max(atrUsd * 1.2, entryMidUsd * 0.012);
+
+  const minTp1Usd = entryMidUsd * 1.012;
+  if (tp1Usd < minTp1Usd) {
+    tp1Usd = minTp1Usd;
   }
 
-  if (
-    rangePosition !== null &&
-    Number.isFinite(rangePosition) &&
-    rangePosition > 60 &&
-    rangePosition <= 75
-  ) {
-    buyPriceUsd = Math.min(buyPriceUsd, priceUsd * 0.99);
+  let tp2Usd = item.nextResistanceUsd !== null
+    ? item.nextResistanceUsd - atrUsd * 0.18
+    : entryMidUsd + Math.max(atrUsd * 2.4, riskDistanceUsd * 1.8);
+
+  if (tp2Usd <= tp1Usd) {
+    tp2Usd = tp1Usd + Math.max(atrUsd * 0.9, riskDistanceUsd * 0.9);
   }
 
-  if (
-    pullbackFromHigh !== null &&
-    Number.isFinite(pullbackFromHigh) &&
-    pullbackFromHigh >= 5 &&
-    pullbackFromHigh <= 15
-  ) {
-    buyPriceUsd = Math.min(buyPriceUsd, priceUsd);
-  }
-
-  buyPriceUsd = round(buyPriceUsd);
-
-  const stopCandidates: number[] = [buyPriceUsd * 0.92];
-
-  if (
-    sma30 !== null &&
-    Number.isFinite(sma30) &&
-    sma30 > 0 &&
-    sma30 < buyPriceUsd
-  ) {
-    stopCandidates.push(sma30 * 0.97);
-  }
-
-  if (
-    low30d !== null &&
-    Number.isFinite(low30d) &&
-    low30d > 0 &&
-    low30d < buyPriceUsd
-  ) {
-    stopCandidates.push(low30d * 0.99);
-  }
-
-  let initialStopLossUsd = Math.max(
-    ...stopCandidates.filter(
-      (candidate) => Number.isFinite(candidate) && candidate < buyPriceUsd
-    )
+  let tp3Usd = Math.max(
+    tp2Usd + Math.max(atrUsd * 1.2, riskDistanceUsd * 1.1),
+    entryMidUsd + Math.max(atrUsd * 3.2, riskDistanceUsd * 2.4)
   );
-
-  let riskPercent = percentDifference(buyPriceUsd, initialStopLossUsd) * -1;
-
-  if (Math.abs(riskPercent) < 4) {
-    initialStopLossUsd = buyPriceUsd * 0.96;
-  }
-
-  if (Math.abs(riskPercent) > 12) {
-    initialStopLossUsd = buyPriceUsd * 0.88;
-  }
-
-  initialStopLossUsd = round(initialStopLossUsd);
-  riskPercent = Math.abs(percentDifference(buyPriceUsd, initialStopLossUsd));
-
-  const riskDistanceUsd = Math.max(
-    buyPriceUsd - initialStopLossUsd,
-    buyPriceUsd * 0.03
-  );
-
-  let tp1Usd = buyPriceUsd + riskDistanceUsd * 1.0;
-  let tp2Usd = buyPriceUsd + riskDistanceUsd * 2.0;
-  let tp3Usd = buyPriceUsd + riskDistanceUsd * 3.0;
-
-  if (
-    high30d !== null &&
-    Number.isFinite(high30d) &&
-    high30d > buyPriceUsd
-  ) {
-    const resistanceSoft = high30d * 0.95;
-    const resistanceMain = high30d * 0.98;
-    const breakoutTarget = high30d * 1.05;
-
-    tp1Usd = Math.max(tp1Usd, Math.min(resistanceSoft, buyPriceUsd * 1.08));
-    tp2Usd = Math.max(tp2Usd, resistanceMain);
-    tp3Usd = Math.max(tp3Usd, breakoutTarget);
-  }
-
-  if (
-    change30d !== null &&
-    Number.isFinite(change30d) &&
-    change30d > 0
-  ) {
-    const momentum = clamp(change30d, 8, 30);
-
-    tp1Usd = Math.max(
-      tp1Usd,
-      buyPriceUsd * (1 + Math.min(momentum * 0.35, 8) / 100)
-    );
-    tp2Usd = Math.max(
-      tp2Usd,
-      buyPriceUsd * (1 + Math.min(momentum * 0.7, 16) / 100)
-    );
-    tp3Usd = Math.max(
-      tp3Usd,
-      buyPriceUsd * (1 + Math.min(momentum * 1.1, 28) / 100)
-    );
-  }
-
-  if (tp1Usd <= buyPriceUsd) tp1Usd = buyPriceUsd * 1.05;
-  if (tp2Usd <= tp1Usd) tp2Usd = tp1Usd * 1.05;
-  if (tp3Usd <= tp2Usd) tp3Usd = tp2Usd * 1.05;
 
   tp1Usd = round(tp1Usd);
   tp2Usd = round(tp2Usd);
   tp3Usd = round(tp3Usd);
 
-  const tp1Percent = percentDifference(buyPriceUsd, tp1Usd);
-  const tp2Percent = percentDifference(buyPriceUsd, tp2Usd);
-  const tp3Percent = percentDifference(buyPriceUsd, tp3Usd);
+  const tp1Percent = percentDifference(entryMidUsd, tp1Usd);
+  const tp2Percent = percentDifference(entryMidUsd, tp2Usd);
+  const tp3Percent = percentDifference(entryMidUsd, tp3Usd);
 
-  const riskRewardTp1 = Number(
-    (
-      (tp1Usd - buyPriceUsd) /
-      Math.max(buyPriceUsd - initialStopLossUsd, 0.00000001)
-    ).toFixed(2)
-  );
-  const riskRewardTp2 = Number(
-    (
-      (tp2Usd - buyPriceUsd) /
-      Math.max(buyPriceUsd - initialStopLossUsd, 0.00000001)
-    ).toFixed(2)
-  );
-  const riskRewardTp3 = Number(
-    (
-      (tp3Usd - buyPriceUsd) /
-      Math.max(buyPriceUsd - initialStopLossUsd, 0.00000001)
-    ).toFixed(2)
-  );
+  const riskRewardTp1 = Number(((tp1Usd - entryMidUsd) / Math.max(entryMidUsd - initialStopLossUsd, 0.00000001)).toFixed(2));
+  const riskRewardTp2 = Number(((tp2Usd - entryMidUsd) / Math.max(entryMidUsd - initialStopLossUsd, 0.00000001)).toFixed(2));
+  const riskRewardTp3 = Number(((tp3Usd - entryMidUsd) / Math.max(entryMidUsd - initialStopLossUsd, 0.00000001)).toFixed(2));
 
-  const breakEvenPriceUsd = round(buyPriceUsd * 1.001);
+  const breakEvenActivationPriceUsd = round(Math.max(item.breakEvenActivationPriceUsd ?? tp1Usd, tp1Usd));
+  const breakEvenPriceUsd = round(entryMidUsd * 1.002);
 
-  let trailingStopPercent = 3.5;
+  const atrPercent = item.atr1hPercent ?? 1.2;
+  const trailingStopPercent = Number(clamp(atrPercent * item.trailingAtrMultiplier, 1.6, 4.8).toFixed(2));
+  const trailingStopAfterTp1Usd = round(Math.max(breakEvenPriceUsd, tp1Usd * (1 - trailingStopPercent / 100)));
 
-  if (
-    change30d !== null &&
-    Number.isFinite(change30d) &&
-    change30d >= 20
-  ) {
-    trailingStopPercent = 5.5;
-  } else if (
-    change30d !== null &&
-    Number.isFinite(change30d) &&
-    change30d >= 12
-  ) {
-    trailingStopPercent = 4.5;
-  }
-
-  const trailingStopAfterTp1Usd = round(
-    Math.max(
-      breakEvenPriceUsd,
-      tp1Usd * (1 - trailingStopPercent / 100)
-    )
-  );
-
-  const managementPlan: string[] = [
-    `Входить не выше ${round(buyPriceUsd)}`,
-    `Начальный стоп поставить на ${round(initialStopLossUsd)}`,
-    `На TP1 (${round(tp1Usd)}) можно зафиксировать 25-35% позиции`,
-    `После достижения TP1 стоп перевести в безубыток: ${round(breakEvenPriceUsd)}`,
-    `Далее включить trailing-stop ${trailingStopPercent.toFixed(
-      1
-    )}% (ориентир: ${round(trailingStopAfterTp1Usd)})`,
-    `На TP2 (${round(tp2Usd)}) можно закрыть еще 35-50% позиции`,
-    `Остаток держать до TP3 (${round(tp3Usd)}) или до срабатывания trailing-stop`,
+  const managementPlan = [
+    `Входить зоной ${entryFromUsd} - ${entryToUsd}, не брать цену выше верхней границы зоны`,
+    `Начальный стоп поставить на ${initialStopLossUsd}; если цена закрывает 1H ниже этого уровня, long-сценарий сломан`,
+    `TP1 (${tp1Usd}) специально консервативный: забрать 20-30% позиции и зафиксировать первый реальный плюс`,
+    `Переводить стоп в безубыток только после подтверждения: 1H закрытие выше TP1 или проход цены до ${breakEvenActivationPriceUsd}`,
+    `После подтвержденного TP1 стоп можно поднять в ${breakEvenPriceUsd}`,
+    `TP2 (${tp2Usd}) — основная цель, там можно закрыть еще 40-50% позиции`,
+    `Остаток вести к TP3 (${tp3Usd}) или по trailing-stop ${trailingStopPercent}% (ориентир ${trailingStopAfterTp1Usd})`
   ];
 
   return {
-    buyPriceUsd,
+    entryFromUsd,
+    entryToUsd,
     initialStopLossUsd,
+    breakEvenActivationPriceUsd,
     breakEvenPriceUsd,
-    trailingStopAfterTp1Usd,
     trailingStopPercent,
+    trailingStopAfterTp1Usd,
     tp1Usd,
     tp2Usd,
     tp3Usd,
@@ -366,69 +186,40 @@ function buildTradePlan(item: {
     riskRewardTp1,
     riskRewardTp2,
     riskRewardTp3,
+    nearestResistanceUsd: item.nearestResistanceUsd,
+    nextResistanceUsd: item.nextResistanceUsd,
+    nearestSupportUsd: item.nearestSupportUsd,
+    roomToResistancePercent: item.roomToResistancePercent,
+    atr1hPercent: item.atr1hPercent,
     managementPlan,
   };
 }
 
-function buildNoBuyExplanation(summary: {
-  buyCount: number;
-  holdCount: number;
-  sellCount: number;
-  bullishCount: number;
-  sidewaysCount: number;
-  bearishCount: number;
-  avgChange30d: number | null;
-  avgRsi14: number | null;
-}): string {
+function buildNoBuyExplanation(summary: BuyMarketSummary): string {
   const reasons: string[] = [];
 
   if (summary.buyCount > 0) {
-    return "На рынке есть пары с подтвержденным сигналом BUY.";
+    return "На рынке есть пары, которые прошли новые фильтры regime + setup + space + execution.";
   }
 
-  if (
-    summary.sidewaysCount >= summary.bullishCount &&
-    summary.sidewaysCount >= summary.bearishCount
-  ) {
-    reasons.push("по большинству монет рынок сейчас боковой");
+  if (summary.sidewaysCount >= summary.bullishCount && summary.sidewaysCount >= summary.bearishCount) {
+    reasons.push("рынок в основном боковой");
   }
 
   if (summary.bearishCount > summary.bullishCount) {
     reasons.push("медвежьих сценариев больше, чем бычьих");
   }
 
-  if (
-    summary.avgChange30d !== null &&
-    Number.isFinite(summary.avgChange30d) &&
-    summary.avgChange30d < 5
-  ) {
-    reasons.push("средний импульс за 30 дней слишком слабый для уверенного BUY");
+  if (summary.avgChange30d !== null && summary.avgChange30d < 4) {
+    reasons.push("средний месячный импульс слабый");
   }
 
-  if (
-    summary.avgRsi14 !== null &&
-    Number.isFinite(summary.avgRsi14) &&
-    summary.avgRsi14 > 65
-  ) {
-    reasons.push("часть рынка выглядит перегретой по RSI");
-  }
-
-  if (
-    summary.avgRsi14 !== null &&
-    Number.isFinite(summary.avgRsi14) &&
-    summary.avgRsi14 >= 45 &&
-    summary.avgRsi14 <= 60 &&
-    summary.sidewaysCount >= summary.bullishCount
-  ) {
-    reasons.push(
-      "RSI в среднем нейтральный, но без сильного трендового подтверждения"
-    );
+  if (summary.avgRsi14 !== null && (summary.avgRsi14 > 68 || summary.avgRsi14 < 44)) {
+    reasons.push("RSI по рынку уходит из комфортной зоны");
   }
 
   if (!reasons.length) {
-    reasons.push(
-      "сейчас нет монет, которые одновременно проходят фильтры по тренду, месячному импульсу, RSI и положению относительно SMA30"
-    );
+    reasons.push("монеты не проходят фильтры по room-to-resistance, 4H/1H структуре и качеству исполнения");
   }
 
   return reasons.join(", ");
@@ -439,20 +230,14 @@ function toSummary(items: RawEvaluation[]): BuyMarketSummary {
   const holdCount = items.filter((item) => item.signal === "HOLD").length;
   const sellCount = items.filter((item) => item.signal === "SELL").length;
 
-  const bullishCount = items.filter(
-    (item) => item.trend30d === "BULLISH"
-  ).length;
-  const sidewaysCount = items.filter(
-    (item) => item.trend30d === "SIDEWAYS"
-  ).length;
-  const bearishCount = items.filter(
-    (item) => item.trend30d === "BEARISH"
-  ).length;
+  const bullishCount = items.filter((item) => item.trend30d === "BULLISH").length;
+  const sidewaysCount = items.filter((item) => item.trend30d === "SIDEWAYS").length;
+  const bearishCount = items.filter((item) => item.trend30d === "BEARISH").length;
 
   const avgChange30d = average(items.map((item) => item.change30d));
   const avgRsi14 = average(items.map((item) => item.rsi14));
 
-  return {
+  const summary: BuyMarketSummary = {
     totalChecked: items.length,
     buyCount,
     holdCount,
@@ -462,121 +247,50 @@ function toSummary(items: RawEvaluation[]): BuyMarketSummary {
     bearishCount,
     avgChange30d,
     avgRsi14,
-    explanation: buildNoBuyExplanation({
-      buyCount,
-      holdCount,
-      sellCount,
-      bullishCount,
-      sidewaysCount,
-      bearishCount,
-      avgChange30d,
-      avgRsi14,
-    }),
+    explanation: ""
   };
+
+  summary.explanation = buildNoBuyExplanation(summary);
+  return summary;
 }
 
 export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
-  const evaluated = await mapWithConcurrency(
-    CANDIDATE_SYMBOLS,
-    4,
-    async (symbol): Promise<RawEvaluation | null> => {
-      try {
-        const market = await buildMarketContext(symbol);
-        const evaluation = evaluateMarketSignal(market);
-
-        if (!evaluation) {
-          return null;
-        }
-
-        return {
-          pair: evaluation.pair,
-          symbol: evaluation.symbol,
-          name: evaluation.name,
-          priceUsd: evaluation.priceUsd,
-          change24h: evaluation.change24h,
-          change30d: evaluation.change30d,
-          trend30d: evaluation.trend30d,
-          rsi14: evaluation.rsi14,
-          high30d: evaluation.high30d,
-          low30d: evaluation.low30d,
-          sma30: evaluation.sma30,
-          rangePosition: evaluation.rangePosition,
-          pullbackFromHigh: evaluation.pullbackFromHigh,
-          score: evaluation.score,
-          signal: evaluation.signal,
-          reason: evaluation.reason,
-        };
-      } catch (error) {
-        console.error(`Buy scan failed for ${symbol}:`, error);
-        return null;
-      }
+  const evaluated = await mapWithConcurrency(CANDIDATE_SYMBOLS, 4, async (symbol): Promise<RawEvaluation | null> => {
+    try {
+      const market = await buildMarketContext(symbol);
+      const evaluation = evaluateMarketSignal(market);
+      return evaluation ?? null;
+    } catch (error) {
+      console.error(`Buy scan failed for ${symbol}:`, error);
+      return null;
     }
-  );
+  });
 
-  const validItems = evaluated.filter(
-    (item): item is RawEvaluation => item !== null
-  );
-
+  const validItems = evaluated.filter((item): item is RawEvaluation => item !== null);
   const summary = toSummary(validItems);
 
   const buys: BuyCandidate[] = validItems
-    .filter(
-      (item): item is RawEvaluation & { signal: "BUY" } =>
-        item.signal === "BUY"
-    )
+    .filter((item): item is RawEvaluation & { signal: "BUY" } => item.signal === "BUY")
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
-    .map((item, index) => {
-      const tradePlan = buildTradePlan({
-        priceUsd: item.priceUsd,
-        high30d: item.high30d,
-        low30d: item.low30d,
-        sma30: item.sma30,
-        rangePosition: item.rangePosition,
-        pullbackFromHigh: item.pullbackFromHigh,
-        change30d: item.change30d,
-      });
+    .map((item, index) => ({
+      rank: index + 1,
+      pair: item.pair,
+      symbol: item.symbol,
+      name: item.name,
+      exchange: "PIONEX",
+      priceUsd: item.priceUsd,
+      ...buildTradePlan(item),
+      change24h: item.change24h,
+      change30d: item.change30d,
+      trend30d: item.trend30d,
+      rsi14: item.rsi14,
+      score: item.score,
+      signal: "BUY",
+      reason: item.reason,
+      positives: item.positives,
+      negatives: item.negatives,
+    }));
 
-      return {
-        rank: index + 1,
-        pair: item.pair,
-        symbol: item.symbol,
-        name: item.name,
-        priceUsd: item.priceUsd,
-
-        buyPriceUsd: tradePlan.buyPriceUsd,
-
-        initialStopLossUsd: tradePlan.initialStopLossUsd,
-        breakEvenPriceUsd: tradePlan.breakEvenPriceUsd,
-        trailingStopAfterTp1Usd: tradePlan.trailingStopAfterTp1Usd,
-        trailingStopPercent: tradePlan.trailingStopPercent,
-
-        tp1Usd: tradePlan.tp1Usd,
-        tp2Usd: tradePlan.tp2Usd,
-        tp3Usd: tradePlan.tp3Usd,
-
-        tp1Percent: tradePlan.tp1Percent,
-        tp2Percent: tradePlan.tp2Percent,
-        tp3Percent: tradePlan.tp3Percent,
-        riskPercent: tradePlan.riskPercent,
-
-        riskRewardTp1: tradePlan.riskRewardTp1,
-        riskRewardTp2: tradePlan.riskRewardTp2,
-        riskRewardTp3: tradePlan.riskRewardTp3,
-
-        change24h: item.change24h,
-        change30d: item.change30d,
-        trend30d: item.trend30d,
-        rsi14: item.rsi14,
-        score: item.score,
-        signal: "BUY",
-        reason: item.reason,
-        managementPlan: tradePlan.managementPlan,
-      };
-    });
-
-  return {
-    buys,
-    summary,
-  };
+  return { buys, summary };
 }

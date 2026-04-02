@@ -24,20 +24,25 @@ function buildBuyCard(item: BuyCandidate): string {
 
   return [
     `${item.rank}. ${item.pair} — ${item.signal}`,
+    `Биржа / данные: ${item.exchange}`,
     `Текущая цена: ${formatPrice(item.priceUsd)}`,
-    `Покупка: до ${formatPrice(item.buyPriceUsd)}`,
+    `Зона входа: ${formatPrice(item.entryFromUsd)} - ${formatPrice(item.entryToUsd)}`,
     `Начальный stop-loss: ${formatPrice(item.initialStopLossUsd)} (-${item.riskPercent.toFixed(2)}%)`,
     `TP1: ${formatPrice(item.tp1Usd)} (${formatPercent(item.tp1Percent)}) | R/R 1:${item.riskRewardTp1.toFixed(2)}`,
     `TP2: ${formatPrice(item.tp2Usd)} (${formatPercent(item.tp2Percent)}) | R/R 1:${item.riskRewardTp2.toFixed(2)}`,
     `TP3: ${formatPrice(item.tp3Usd)} (${formatPercent(item.tp3Percent)}) | R/R 1:${item.riskRewardTp3.toFixed(2)}`,
-    `Break-even после TP1: ${formatPrice(item.breakEvenPriceUsd)}`,
-    `Trailing-stop после TP1: ${item.trailingStopPercent.toFixed(1)}% (ориентир ${formatPrice(item.trailingStopAfterTp1Usd)})`,
+    `Break-even только после подтверждения: ${formatPrice(item.breakEvenActivationPriceUsd)}`,
+    `Цена безубытка после подтверждения: ${formatPrice(item.breakEvenPriceUsd)}`,
+    `Trailing-stop после подтвержденного TP1: ${item.trailingStopPercent.toFixed(2)}% (ориентир ${formatPrice(item.trailingStopAfterTp1Usd)})`,
+    `Room до ближайшего сопротивления: ${formatPercent(item.roomToResistancePercent)} | ATR 1H: ${formatPercent(item.atr1hPercent)}`,
+    `Сопротивление 1: ${item.nearestResistanceUsd ? formatPrice(item.nearestResistanceUsd) : "n/a"} | Сопротивление 2: ${item.nextResistanceUsd ? formatPrice(item.nextResistanceUsd) : "n/a"}`,
+    `Поддержка: ${item.nearestSupportUsd ? formatPrice(item.nearestSupportUsd) : "n/a"}`,
     `30д: ${formatPercent(item.change30d)} | 24ч: ${formatPercent(item.change24h)}`,
-    `Тренд 30д: ${item.trend30d} | RSI: ${
-      item.rsi14 !== null ? item.rsi14.toFixed(2) : "n/a"
-    }`,
+    `Тренд 30д: ${item.trend30d} | RSI: ${item.rsi14 !== null ? item.rsi14.toFixed(2) : "n/a"}`,
     `Score: ${item.score.toFixed(2)}`,
-    `Почему: ${item.reason}`,
+    `Почему BUY: ${item.reason}`,
+    `Плюсы: ${item.positives.length ? item.positives.join("; ") : "n/a"}`,
+    `Риски: ${item.negatives.length ? item.negatives.join("; ") : "n/a"}`,
     `|----------------------|`,
     `Как сопровождать сделку:\n${managementText}`,
   ].join("\n");
@@ -47,7 +52,7 @@ export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
       await ctx.reply(
-        "Сканирую рынок и ищу только пары с подтвержденным сигналом BUY на горизонте 1 месяц..."
+        "Сканирую рынок по Pionex и ищу только пары с подтвержденным BUY: 1D regime + 4H structure + 1H entry + room-to-resistance..."
       );
 
       const result = await getBuyScanResult(10);
@@ -69,10 +74,11 @@ export function registerBuyHandler(bot: Telegraf) {
           "",
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
           "",
-          "Логика:",
-          "- /buy показывает только deterministic signal = BUY",
-          "- HOLD и SELL в список не попадают",
-          "- если ни одна монета не прошла фильтры, бот сообщает, что точек входа сейчас нет",
+          "Новая логика /buy:",
+          "- данные берутся с Pionex по spot market",
+          "- BUY дается только если есть место до ближайшего сопротивления",
+          "- TP1 теперь консервативный и должен брать реальную прибыль, а не красивую математику 1R",
+          "- безубыток включается только после подтверждения TP1, а не механически",
         ].join("\n");
 
         await ctx.reply(message);
@@ -84,13 +90,14 @@ export function registerBuyHandler(bot: Telegraf) {
       const message = [
         "🟢 Пары с подтвержденным сигналом BUY",
         "",
-        "Логика отбора:",
-        "- главный горизонт: 1 месяц",
-        "- в выдачу попадают только пары с deterministic signal = BUY",
-        "- для каждой пары показываются вход, начальный стоп, TP1 / TP2 / TP3",
-        "- после TP1 бот показывает перевод стопа в безубыток и trailing-stop",
-        "- HOLD и SELL скрываются",
-        "- учитываются trend 30d, change 30d, RSI, диапазон 30д, SMA30, ликвидность и sentiment",
+        "Новая архитектура /buy:",
+        "- источник market data: Pionex spot",
+        "- фильтры: 1D regime, 4H structure, 1H entry, room-to-resistance, execution quality",
+        "- TP1 ставится консервативно перед ближайшим сопротивлением",
+        "- TP2 — основная цель",
+        "- TP3 — расширенная цель / сопровождение остатка",
+        "- stop-loss ставится по invalidation, а не просто по проценту",
+        "- break-even переносится только после подтверждения движения",
         "- список не является финансовой рекомендацией",
         "",
         ...lines,
