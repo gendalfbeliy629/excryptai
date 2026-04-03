@@ -173,8 +173,58 @@ export type ApiResult<T> = {
   error: string | null;
 };
 
+function normalizeOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/\/$/, "");
+  }
+
+  return `https://${trimmed.replace(/^\/+/, "").replace(/\/$/, "")}`;
+}
+
+async function resolveApiBaseUrl(): Promise<string> {
+  if (typeof window !== "undefined") {
+    return WEB_API_BASE_URL;
+  }
+
+  const envOrigin =
+    normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL) ||
+    normalizeOrigin(process.env.APP_URL) ||
+    normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL) ||
+    normalizeOrigin(process.env.SITE_URL) ||
+    normalizeOrigin(process.env.RAILWAY_PUBLIC_DOMAIN) ||
+    normalizeOrigin(process.env.VERCEL_URL);
+
+  if (envOrigin) {
+    return `${envOrigin}${WEB_API_BASE_URL}`;
+  }
+
+  try {
+    const { headers } = await import("next/headers");
+    const requestHeaders = await headers();
+    const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host");
+    const proto =
+      requestHeaders.get("x-forwarded-proto") ||
+      (host && (host.includes("localhost") || host.startsWith("127.0.0.1")) ? "http" : "https");
+
+    if (host) {
+      return `${proto}://${host}${WEB_API_BASE_URL}`;
+    }
+  } catch {
+    // ignore and fall through to localhost fallback
+  }
+
+  return `http://127.0.0.1:${process.env.PORT || "3000"}${WEB_API_BASE_URL}`;
+}
+
 async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${WEB_API_BASE_URL}${path}`, {
+  const apiBaseUrl = await resolveApiBaseUrl();
+
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     cache: "no-store",
     ...init
   });

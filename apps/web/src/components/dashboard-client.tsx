@@ -5,8 +5,10 @@ import {
   AiResponse,
   DashboardData,
   getAiAnalysis,
+  getDashboardData,
   getInfoCard,
   getMarketDetail,
+  getMarkets,
   InfoResponse,
   MarketsResponse,
   MarketDetail
@@ -161,8 +163,18 @@ function useSelectedMarket(
   }
 
   useEffect(() => {
+    setSelectedSymbol(initialSelectedSymbol);
+  }, [initialSelectedSymbol]);
+
+  useEffect(() => {
     if (selectedSymbol === initialSelectedSymbol && initialDetail) {
       setDetail(initialDetail);
+      setDetailError(null);
+      return;
+    }
+
+    if (!selectedSymbol) {
+      setDetail(null);
       setDetailError(null);
       return;
     }
@@ -439,8 +451,16 @@ export default function DashboardClient({
   initialDetail,
   detailError: initialDetailError
 }: Props) {
-  const dashboard = initialDashboard;
-  const markets = initialMarkets;
+  const [dashboard, setDashboard] = useState<DashboardData | null>(initialDashboard);
+  const [markets, setMarkets] = useState<MarketsResponse | null>(initialMarkets);
+  const [selectedSymbolSeed, setSelectedSymbolSeed] = useState(initialSelectedSymbol || "BTC");
+  const [detailSeed, setDetailSeed] = useState<MarketDetail | null>(initialDetail);
+  const [bootstrapLoading, setBootstrapLoading] = useState(
+    !initialDashboard || !initialMarkets || !initialDetail
+  );
+  const [bootstrapError, setBootstrapError] = useState<string | null>(
+    dashboardError ?? marketsError ?? initialDetailError ?? null
+  );
 
   const {
     selectedSymbol,
@@ -449,7 +469,7 @@ export default function DashboardClient({
     detailLoading,
     detailError,
     reloadDetail
-  } = useSelectedMarket(initialDetail, initialSelectedSymbol);
+  } = useSelectedMarket(detailSeed, selectedSymbolSeed);
 
   const [panelMode, setPanelMode] = useState<SidePanelMode>("summary");
   const [infoData, setInfoData] = useState<InfoResponse | null>(null);
@@ -486,6 +506,80 @@ export default function DashboardClient({
   useEffect(() => {
     setSideError(null);
   }, [selectedSymbol]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      if (initialDashboard && initialMarkets && initialDetail) {
+        setBootstrapLoading(false);
+        return;
+      }
+
+      setBootstrapLoading(true);
+      setBootstrapError(null);
+
+      try {
+        const [dashboardResponse, marketsResponse] = await Promise.all([
+          getDashboardData(),
+          getMarkets(30)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setDashboard(dashboardResponse);
+        setMarkets(marketsResponse);
+
+        const nextSymbol =
+          dashboardResponse.topBuys[0]?.symbol ??
+          marketsResponse.items.find((item) => item.symbol === "BTC")?.symbol ??
+          marketsResponse.items[0]?.symbol ??
+          initialSelectedSymbol ??
+          "BTC";
+
+        setSelectedSymbolSeed(nextSymbol);
+
+        try {
+          const detailResponse = await getMarketDetail(nextSymbol);
+
+          if (cancelled) {
+            return;
+          }
+
+          setDetailSeed(detailResponse);
+        } catch (error) {
+          if (cancelled) {
+            return;
+          }
+
+          setDetailSeed(null);
+          setBootstrapError(
+            error instanceof Error ? error.message : "Не удалось загрузить данные по выбранной паре"
+          );
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setBootstrapError(
+          error instanceof Error ? error.message : "Не удалось загрузить dashboard"
+        );
+      } finally {
+        if (!cancelled) {
+          setBootstrapLoading(false);
+        }
+      }
+    }
+
+    void bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialDashboard, initialDetail, initialMarkets, initialSelectedSymbol]);
 
   async function handleLoadInfo() {
     setPanelMode("info");
@@ -533,10 +627,56 @@ export default function DashboardClient({
         ? normalizeTextBlock(infoData?.text)
         : normalizeTextBlock(aiData?.text);
 
-  const topError = dashboardError ?? marketsError ?? initialDetailError ?? detailError;
+  const topError = bootstrapError ?? detailError;
 
   return (
     <>
+      {bootstrapLoading ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 120,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            background: "rgba(3, 8, 20, 0.76)",
+            backdropFilter: "blur(10px)"
+          }}
+        >
+          <div
+            style={{
+              width: "min(420px, 100%)",
+              padding: 28,
+              borderRadius: 20,
+              border: "1px solid rgba(73, 130, 255, 0.28)",
+              background:
+                "linear-gradient(180deg, rgba(10, 22, 48, 0.98), rgba(7, 15, 32, 0.98))",
+              boxShadow: "0 20px 48px rgba(0, 0, 0, 0.34)",
+              textAlign: "center"
+            }}
+          >
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                margin: "0 auto 18px",
+                borderRadius: "50%",
+                border: "4px solid rgba(255, 255, 255, 0.12)",
+                borderTopColor: "#4ea1ff",
+                animation: "dashboardSpinner 0.9s linear infinite"
+              }}
+            />
+            <h3 style={{ margin: 0, fontSize: 22 }}>Загружаем рыночные данные</h3>
+            <p style={{ margin: "12px 0 0", color: "#a7b0d1", lineHeight: 1.6 }}>
+              В кеше пока нет готовых данных по криптопарам. Ждём первый прогрев dashboard,
+              список рынков и детальную карточку пары.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <section className="hero">
         <div className="hero-badge">Dashboard</div>
         <h1 className="page-title">Crypto AI Dashboard</h1>
@@ -556,7 +696,7 @@ export default function DashboardClient({
         </section>
       ) : null}
 
-      <section className="section dashboard-grid">
+      <section className="section dashboard-grid" aria-busy={bootstrapLoading}>
         <div className="dashboard-left-stack">
           <div className="card dashboard-chart-card">
             <TradingChart detail={detail} activeIndicators={activeIndicators} />
@@ -739,6 +879,17 @@ export default function DashboardClient({
           </div>
         </div>
       </section>
+
+      <style jsx global>{`
+        @keyframes dashboardSpinner {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
     </>
   );
 }
