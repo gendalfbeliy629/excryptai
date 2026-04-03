@@ -23,6 +23,14 @@
   },
   "dynamicRoutes": [
     {
+      "page": "/backend/[...path]",
+      "regex": "^/backend/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/backend/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
       "page": "/markets/[symbol]",
       "regex": "^/markets/([^/]+?)(?:/)?$",
       "routeKeys": {

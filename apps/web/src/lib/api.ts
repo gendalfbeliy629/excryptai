@@ -1,8 +1,4 @@
-const API_BASE_URL = (
-  process.env.API_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:4000/api"
-).replace(/\/$/, "");
+const WEB_API_BASE_URL = "/api/backend";
 
 type ApiEnvelope<T> = {
   success: boolean;
@@ -14,7 +10,7 @@ export type MarketListItem = {
   symbol: string;
   name: string;
   pair: string;
-  priceUsd: number;
+  priceUsd: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -27,21 +23,16 @@ export type BuyCandidate = {
   rank: number;
   pair: string;
   symbol: string;
-  quoteSymbol: string;
   name: string;
-  exchange: "PIONEX";
-  price: number;
-  priceUsd: number | null;
-  entryFrom: number;
-  entryTo: number;
-  initialStopLoss: number;
-  breakEvenActivationPrice: number;
-  breakEvenPrice: number;
+  priceUsd: number;
+  buyPriceUsd: number;
+  initialStopLossUsd: number;
+  breakEvenPriceUsd: number;
+  trailingStopAfterTp1Usd: number;
   trailingStopPercent: number;
-  trailingStopAfterTp1: number;
-  tp1: number;
-  tp2: number;
-  tp3: number;
+  tp1Usd: number;
+  tp2Usd: number;
+  tp3Usd: number;
   tp1Percent: number;
   tp2Percent: number;
   tp3Percent: number;
@@ -49,11 +40,6 @@ export type BuyCandidate = {
   riskRewardTp1: number;
   riskRewardTp2: number;
   riskRewardTp3: number;
-  nearestResistance: number | null;
-  nextResistance: number | null;
-  nearestSupport: number | null;
-  roomToResistancePercent: number | null;
-  atr1hPercent: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -61,16 +47,6 @@ export type BuyCandidate = {
   score: number;
   signal: "BUY";
   reason: string;
-  positives: string[];
-  negatives: string[];
-  entryConfirmationStatus: string;
-  entryConfirmationStrategy: string;
-  entryConfirmationText: string;
-  confirmationLevel: number | null;
-  confirmationRetestLevel: number | null;
-  confirmationBreakoutLevel: number | null;
-  lastClosed1hCandleTime: number | null;
-  lastClosed1hCandleClose: number | null;
   managementPlan: string[];
 };
 
@@ -78,12 +54,7 @@ export type DashboardData = {
   featured: MarketListItem[];
   topBuys: BuyCandidate[];
   summary: {
-    totalSpotMarkets: number;
-    stage1Checked: number;
-    stage2Candidates: number;
     totalChecked: number;
-    analyzedMarkets: number;
-    failedMarkets: number;
     buyCount: number;
     holdCount: number;
     sellCount: number;
@@ -93,10 +64,6 @@ export type DashboardData = {
     avgChange30d: number | null;
     avgRsi14: number | null;
     explanation: string;
-    failedDetails: Array<{
-      pair: string;
-      reason: string;
-    }>;
   };
   degraded?: boolean;
 };
@@ -120,8 +87,7 @@ export type MarketDetail = {
       display: string;
     };
     spot: {
-      price: number;
-      priceUsd: number;
+      priceUsd: number | null;
       change24h: number | null;
       marketCapUsd: number | null;
     };
@@ -157,7 +123,7 @@ export type MarketDetail = {
     pair: string;
     symbol: string;
     name: string;
-    priceUsd: number;
+    priceUsd: number | null;
     change24h: number | null;
     change30d: number | null;
     trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -178,7 +144,6 @@ export type MarketDetail = {
     nearestResistance: number | null;
     nextResistance: number | null;
     nearestSupport: number | null;
-    roomToResistancePercent: number | null;
     entryZoneLow: number | null;
     entryZoneHigh: number | null;
     breakEvenActivationPrice: number | null;
@@ -186,14 +151,8 @@ export type MarketDetail = {
     protectiveStop: number | null;
     invalidationLevel: number | null;
     target1DistancePercent: number | null;
-    entryConfirmationStatus: string;
-    entryConfirmationStrategy: string;
     entryConfirmationText: string;
     confirmationLevel: number | null;
-    confirmationRetestLevel: number | null;
-    confirmationBreakoutLevel: number | null;
-    lastClosed1hCandleTime: number | null;
-    lastClosed1hCandleClose: number | null;
   };
 };
 
@@ -214,9 +173,10 @@ export type ApiResult<T> = {
   error: string | null;
 };
 
-async function fetchApi<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    cache: "no-store"
+async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${WEB_API_BASE_URL}${path}`, {
+    cache: "no-store",
+    ...init
   });
 
   if (!response.ok) {
@@ -228,7 +188,7 @@ async function fetchApi<T>(path: string): Promise<T> {
         errorMessage = payload.error;
       }
     } catch {
-      // ignore json parse failure
+      // ignore
     }
 
     throw new Error(errorMessage);
@@ -262,7 +222,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   return fetchApi<DashboardData>("/dashboard");
 }
 
-export async function getMarkets(limit = 12): Promise<MarketsResponse> {
+export async function getMarkets(limit = 30): Promise<MarketsResponse> {
   return fetchApi<MarketsResponse>(`/markets?limit=${limit}`);
 }
 
@@ -282,7 +242,7 @@ export async function safeGetDashboardData(): Promise<ApiResult<DashboardData>> 
   return safeFetchApi<DashboardData>("/dashboard");
 }
 
-export async function safeGetMarkets(limit = 12): Promise<ApiResult<MarketsResponse>> {
+export async function safeGetMarkets(limit = 30): Promise<ApiResult<MarketsResponse>> {
   return safeFetchApi<MarketsResponse>(`/markets?limit=${limit}`);
 }
 

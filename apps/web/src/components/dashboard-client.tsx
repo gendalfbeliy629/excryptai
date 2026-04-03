@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  DashboardData,
-  InfoResponse,
-  MarketsResponse,
-  MarketDetail,
   AiResponse,
+  DashboardData,
   getAiAnalysis,
   getInfoCard,
-  getMarketDetail
+  getMarketDetail,
+  InfoResponse,
+  MarketsResponse,
+  MarketDetail
 } from "../lib/api";
 import {
   formatCompactUsd,
@@ -55,7 +55,6 @@ function signalClassName(signal: "BUY" | "HOLD" | "SELL") {
 
 function normalizeTextBlock(text: string | null | undefined): string[] {
   if (!text) return [];
-
   return text
     .split("\n")
     .map((line) => line.trim())
@@ -64,11 +63,15 @@ function normalizeTextBlock(text: string | null | undefined): string[] {
 
 function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData | null): string[] {
   if (!detail) {
-    return normalizeTextBlock(dashboard?.summary.explanation);
+    return normalizeTextBlock(
+      dashboard?.summary.explanation ||
+        "Сейчас BUY-сигналов нет. Рынок находится в режиме наблюдения."
+    );
   }
 
   const signal = detail.signal;
-  const lines = [
+
+  return [
     `Пара: ${signal.pair}`,
     `Сигнал: ${signal.signal}`,
     `Причина: ${signal.reason}`,
@@ -79,7 +82,7 @@ function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData
       ? `Зона входа: ${formatPrice(signal.entryZoneLow)} - ${formatPrice(signal.entryZoneHigh)}`
       : null,
     signal.breakEvenActivationPrice !== null
-      ? `Break-even после подтверждения: ${formatPrice(signal.breakEvenActivationPrice)}`
+      ? `Перевод в безубыток после: ${formatPrice(signal.breakEvenActivationPrice)}`
       : null,
     signal.nearestResistance !== null
       ? `Ближайшее сопротивление: ${formatPrice(signal.nearestResistance)}`
@@ -87,12 +90,8 @@ function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData
     signal.nearestSupport !== null
       ? `Ближайшая поддержка: ${formatPrice(signal.nearestSupport)}`
       : null,
-    signal.atr1hPercent !== null
-      ? `ATR 1H: ${formatNumber(signal.atr1hPercent)}%`
-      : null
-  ].filter((line): line is string => Boolean(line));
-
-  return lines;
+    signal.atr1hPercent !== null ? `ATR 1H: ${formatNumber(signal.atr1hPercent)}%` : null
+  ].filter((item): item is string => Boolean(item));
 }
 
 function buildManagementLines(
@@ -107,30 +106,33 @@ function buildManagementLines(
   }
 
   if (!detail) {
-    return [dashboard?.summary.explanation ?? "Данные по сопровождению сделки временно недоступны."];
+    return normalizeTextBlock(
+      dashboard?.summary.explanation ||
+        "BUY-сценарий не найден. Следи за рынком и дождись нового подтверждения."
+    );
   }
 
   const lines = [
     detail.signal.entryConfirmationText
-      ? `Ждать только подтвержденный сценарий: ${detail.signal.entryConfirmationText}.`
+      ? `Действовать только после подтверждения: ${detail.signal.entryConfirmationText}.`
       : null,
     detail.signal.entryZoneLow !== null && detail.signal.entryZoneHigh !== null
       ? `Рабочая зона набора позиции: ${formatPrice(detail.signal.entryZoneLow)} - ${formatPrice(detail.signal.entryZoneHigh)}.`
       : null,
     detail.signal.invalidationLevel !== null
-      ? `Отмена сценария ниже ${formatPrice(detail.signal.invalidationLevel)}.`
+      ? `Сценарий отменяется ниже ${formatPrice(detail.signal.invalidationLevel)}.`
       : null,
     detail.signal.breakEvenActivationPrice !== null
-      ? `После движения к ${formatPrice(detail.signal.breakEvenActivationPrice)} переносить риск в безубыток.`
+      ? `После движения к ${formatPrice(detail.signal.breakEvenActivationPrice)} риск логично переводить в безубыток.`
       : null,
     detail.signal.target1DistancePercent !== null
-      ? `Первую фиксацию логично рассматривать после движения примерно на ${formatNumber(detail.signal.target1DistancePercent)}%.`
+      ? `Первую фиксацию можно оценивать после движения примерно на ${formatNumber(detail.signal.target1DistancePercent)}%.`
       : null
-  ].filter((line): line is string => Boolean(line));
+  ].filter((item): item is string => Boolean(item));
 
   return lines.length
     ? lines
-    : ["Для этой пары нет отдельного buy-плана, отображается только summary из анализа."];
+    : ["Для этой пары отдельный buy-план сейчас отсутствует, отображается только summary из анализа."];
 }
 
 function useSelectedMarket(
@@ -142,40 +144,30 @@ function useSelectedMarket(
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function loadDetail(symbol: string) {
+    setDetailLoading(true);
+    setDetailError(null);
 
-    async function loadDetail() {
-      setDetailLoading(true);
-      setDetailError(null);
-
-      try {
-        const nextDetail = await getMarketDetail(selectedSymbol);
-
-        if (!cancelled) {
-          setDetail(nextDetail);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setDetailError(error instanceof Error ? error.message : "Не удалось загрузить detail");
-        }
-      } finally {
-        if (!cancelled) {
-          setDetailLoading(false);
-        }
-      }
+    try {
+      const nextDetail = await getMarketDetail(symbol);
+      setDetail(nextDetail);
+      return nextDetail;
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : "Не удалось загрузить данные по паре");
+      return null;
+    } finally {
+      setDetailLoading(false);
     }
+  }
 
+  useEffect(() => {
     if (selectedSymbol === initialSelectedSymbol && initialDetail) {
       setDetail(initialDetail);
+      setDetailError(null);
       return;
     }
 
-    void loadDetail();
-
-    return () => {
-      cancelled = true;
-    };
+    void loadDetail(selectedSymbol);
   }, [initialDetail, initialSelectedSymbol, selectedSymbol]);
 
   return {
@@ -183,7 +175,8 @@ function useSelectedMarket(
     setSelectedSymbol,
     detail,
     detailLoading,
-    detailError
+    detailError,
+    reloadDetail: async () => loadDetail(selectedSymbol)
   };
 }
 
@@ -201,20 +194,31 @@ function TradingChart({
   const candles = detail?.market.technicals.candles ?? [];
   const visibleCandles = candles.slice(-40);
 
+  const low30d = detail?.signal.low30d ?? null;
+  const high30d = detail?.signal.high30d ?? null;
+  const entryZoneLow = detail?.signal.entryZoneLow ?? null;
+  const entryZoneHigh = detail?.signal.entryZoneHigh ?? null;
+  const protectiveStop = detail?.signal.protectiveStop ?? null;
+  const breakEvenActivationPrice = detail?.signal.breakEvenActivationPrice ?? null;
+  const nearestSupport = detail?.signal.nearestSupport ?? null;
+  const nearestResistance = detail?.signal.nearestResistance ?? null;
+  const confirmationLevel = detail?.signal.confirmationLevel ?? null;
+  const sma30 = detail?.signal.sma30 ?? null;
+
   const yValues = visibleCandles.flatMap((candle) => [candle.high, candle.low]);
   const extraLevels = [
     detail?.signal.sma7,
-    detail?.signal.sma30,
-    detail?.signal.high30d,
-    detail?.signal.low30d,
-    detail?.signal.nearestResistance,
+    sma30,
+    high30d,
+    low30d,
+    nearestResistance,
     detail?.signal.nextResistance,
-    detail?.signal.nearestSupport,
-    detail?.signal.entryZoneLow,
-    detail?.signal.entryZoneHigh,
-    detail?.signal.protectiveStop,
-    detail?.signal.breakEvenActivationPrice,
-    detail?.signal.confirmationLevel
+    nearestSupport,
+    entryZoneLow,
+    entryZoneHigh,
+    protectiveStop,
+    breakEvenActivationPrice,
+    confirmationLevel
   ].filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
 
   const allY = [...yValues, ...extraLevels];
@@ -248,16 +252,6 @@ function TradingChart({
   });
 
   const title = detail?.market.pair.display ?? "BTC/USDT";
-  const low30d = detail?.signal.low30d ?? null;
-  const high30d = detail?.signal.high30d ?? null;
-  const entryZoneLow = detail?.signal.entryZoneLow ?? null;
-  const entryZoneHigh = detail?.signal.entryZoneHigh ?? null;
-  const protectiveStop = detail?.signal.protectiveStop ?? null;
-  const breakEvenActivationPrice = detail?.signal.breakEvenActivationPrice ?? null;
-  const nearestSupport = detail?.signal.nearestSupport ?? null;
-  const nearestResistance = detail?.signal.nearestResistance ?? null;
-  const confirmationLevel = detail?.signal.confirmationLevel ?? null;
-  const sma30 = detail?.signal.sma30 ?? null;
 
   return (
     <div className="chart-shell">
@@ -274,13 +268,6 @@ function TradingChart({
 
       <div className="chart-stage">
         <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`График ${title}`}>
-          <defs>
-            <linearGradient id="chartArea" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="rgba(47, 120, 255, 0.22)" />
-              <stop offset="100%" stopColor="rgba(47, 120, 255, 0.01)" />
-            </linearGradient>
-          </defs>
-
           <rect x="0" y="0" width={width} height={height} rx="20" className="chart-bg" />
 
           {priceTicks.map((tick) => (
@@ -389,7 +376,7 @@ function TradingChart({
             const bullish = candle.close >= candle.open;
 
             return (
-              <g key={candle.time}>
+              <g key={`${candle.time}-${index}`}>
                 <line
                   x1={cx}
                   x2={cx}
@@ -426,10 +413,18 @@ function TradingChart({
       </div>
 
       <div className="chart-legend">
-        <span><i className="legend-dot legend-buy" /> Бычьи свечи</span>
-        <span><i className="legend-dot legend-sell" /> Медвежьи свечи</span>
-        <span><i className="legend-dot legend-zone" /> Entry zone</span>
-        <span><i className="legend-dot legend-resistance" /> Resistance / confirmation</span>
+        <span>
+          <i className="legend-dot legend-buy" /> Бычьи свечи
+        </span>
+        <span>
+          <i className="legend-dot legend-sell" /> Медвежьи свечи
+        </span>
+        <span>
+          <i className="legend-dot legend-zone" /> Entry zone
+        </span>
+        <span>
+          <i className="legend-dot legend-resistance" /> Resistance / confirmation
+        </span>
       </div>
     </div>
   );
@@ -446,12 +441,14 @@ export default function DashboardClient({
 }: Props) {
   const dashboard = initialDashboard;
   const markets = initialMarkets;
+
   const {
     selectedSymbol,
     setSelectedSymbol,
     detail,
     detailLoading,
-    detailError
+    detailError,
+    reloadDetail
   } = useSelectedMarket(initialDetail, initialSelectedSymbol);
 
   const [panelMode, setPanelMode] = useState<SidePanelMode>("summary");
@@ -520,14 +517,23 @@ export default function DashboardClient({
     }
   }
 
+  async function handleRefreshSignal() {
+    setPanelMode("summary");
+    setSideError(null);
+    await reloadDetail();
+  }
+
   const summaryLines = buildSummaryLines(detail, dashboard);
   const managementLines = buildManagementLines(detail, dashboard, selectedSymbol);
+
   const sideTextLines =
     panelMode === "summary"
       ? [...summaryLines, "", "Как сопровождать сделку:", ...managementLines]
       : panelMode === "info"
         ? normalizeTextBlock(infoData?.text)
         : normalizeTextBlock(aiData?.text);
+
+  const topError = dashboardError ?? marketsError ?? initialDetailError ?? detailError;
 
   return (
     <>
@@ -540,16 +546,12 @@ export default function DashboardClient({
         </p>
       </section>
 
-      {dashboardError || marketsError || initialDetailError || detailError ? (
+      {topError ? (
         <section className="section">
           <div className="card warning-card">
             <h3>Часть данных недоступна</h3>
-            <p>
-              Dashboard продолжает работать в деградированном режиме и не падает целиком.
-            </p>
-            <p style={{ marginTop: 12 }}>
-              {dashboardError ?? marketsError ?? initialDetailError ?? detailError}
-            </p>
+            <p>Dashboard продолжает работать в деградированном режиме и не падает целиком.</p>
+            <p style={{ marginTop: 12 }}>{topError}</p>
           </div>
         </section>
       ) : null}
@@ -672,7 +674,6 @@ export default function DashboardClient({
             </div>
 
             {detailLoading || sideLoading ? <p>Загрузка данных...</p> : null}
-
             {sideError ? <p>{sideError}</p> : null}
 
             {!detailLoading && !sideLoading && !sideError ? (
@@ -681,7 +682,9 @@ export default function DashboardClient({
                   <div className="summary-metrics-grid">
                     <div className="summary-metric">
                       <span>Сигнал</span>
-                      <strong className={signalClassName(detail.signal.signal)}>{detail.signal.signal}</strong>
+                      <strong className={signalClassName(detail.signal.signal)}>
+                        {detail.signal.signal}
+                      </strong>
                     </div>
                     <div className="summary-metric">
                       <span>Цена</span>
@@ -709,7 +712,7 @@ export default function DashboardClient({
                 <div className="summary-text-block">
                   {sideTextLines.map((line, index) =>
                     line === "" ? (
-                      <div className="summary-gap" key={`${line}-${index}`} />
+                      <div className="summary-gap" key={`gap-${index}`} />
                     ) : (
                       <p key={`${line}-${index}`}>{line}</p>
                     )
@@ -729,7 +732,7 @@ export default function DashboardClient({
             <button
               type="button"
               className={panelMode === "summary" ? "action-button active" : "action-button"}
-              onClick={() => setPanelMode("summary")}
+              onClick={handleRefreshSignal}
             >
               Сигналы
             </button>

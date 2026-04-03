@@ -18,7 +18,10 @@ const app = express();
 app.use(express.json());
 
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", env.CORS_ORIGIN);
+  const allowedOrigin = env.CORS_ORIGIN || "*";
+
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
@@ -130,7 +133,9 @@ app.get("/", (_req, res) => {
       "/api/dashboard",
       "/api/markets",
       "/api/markets/:symbol",
-      "/api/markets/:symbol/candles"
+      "/api/markets/:symbol/candles",
+      "/api/info/:symbol",
+      "/api/ai/:symbol"
     ]
   });
 });
@@ -179,8 +184,8 @@ app.get("/api/dashboard", async (_req, res) => {
 
 app.get("/api/markets", async (req, res) => {
   try {
-    const limitRaw = String(req.query.limit || "12");
-    const limit = Math.max(1, Math.min(Number(limitRaw) || 12, ALL_SYMBOLS.length));
+    const limitRaw = String(req.query.limit || "30");
+    const limit = Math.max(1, Math.min(Number(limitRaw) || 30, ALL_SYMBOLS.length));
     const symbols = ALL_SYMBOLS.slice(0, limit);
 
     const itemsRaw = await mapWithConcurrency(symbols, 3, buildMarketListItem);
@@ -234,53 +239,34 @@ app.get("/api/markets/:symbol", async (req, res) => {
           setupScore: 0,
           spaceScore: 0,
           executionScore: 0,
+          riskScore: 0,
+          confirmationScore: 0,
           atr1h: null,
           atr1hPercent: null,
           nearestResistance: market.technicals.structure.nearestResistance,
           nextResistance: market.technicals.structure.nextResistance,
           nearestSupport: market.technicals.structure.nearestSupport,
+          secondarySupport: market.technicals.structure.secondarySupport,
           roomToResistancePercent: market.technicals.structure.roomToResistancePercent,
           entryZoneLow: null,
           entryZoneHigh: null,
           breakEvenActivationPrice: null,
-          trailingAtrMultiplier: 1.25
+          trailingAtrMultiplier: 1.25,
+          protectiveStop: null,
+          invalidationLevel: null,
+          pullbackBuyZoneDistancePercent: null,
+          stopDistancePercent: null,
+          target1DistancePercent: null,
+          minimumRoomPercent: null,
+          entryConfirmationStatus: "NO_DATA" as const,
+          entryConfirmationStrategy: "NONE" as const,
+          entryConfirmationText: "Нет достаточных данных для 1H подтверждения входа.",
+          confirmationLevel: null,
+          confirmationRetestLevel: null,
+          confirmationBreakoutLevel: null,
+          lastClosed1hCandleTime: null,
+          lastClosed1hCandleClose: null
         }
-    });
-  } catch (error) {
-    return fail(res, error, 400);
-  }
-});
-
-
-app.get("/api/info/:symbol", async (req, res) => {
-  try {
-    const rawSymbol = String(req.params.symbol || "BTC");
-    const { displayPair } = parseMarketPair(rawSymbol);
-    const text = await getAssetInfo(displayPair);
-
-    return ok(res, {
-      symbol: normalizeSymbol(rawSymbol),
-      pair: displayPair,
-      text
-    });
-  } catch (error) {
-    return fail(res, error, 400);
-  }
-});
-
-app.get("/api/ai/:symbol", async (req, res) => {
-  try {
-    const rawSymbol = String(req.params.symbol || "BTC");
-    const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawSymbol);
-    const market = await buildMarketContext(baseSymbol, quoteSymbol);
-    const question =
-      String(req.query.question || "Дай аналитику текущей пары за 30 дней и кратко объясни как выглядит setup сейчас.");
-    const text = await askAI(question, market);
-
-    return ok(res, {
-      symbol: normalizeSymbol(baseSymbol),
-      pair: displayPair,
-      text
     });
   } catch (error) {
     return fail(res, error, 400);
@@ -296,6 +282,42 @@ app.get("/api/markets/:symbol/candles", async (req, res) => {
     return ok(res, {
       symbol,
       candles
+    });
+  } catch (error) {
+    return fail(res, error, 400);
+  }
+});
+
+app.get("/api/info/:symbol", async (req, res) => {
+  try {
+    const rawSymbol = String(req.params.symbol || "BTC");
+    const { displayPair } = parseMarketPair(rawSymbol);
+    const text = await getAssetInfo(displayPair);
+
+    return ok(res, {
+      symbol: displayPair.split("/")[0],
+      pair: displayPair,
+      text
+    });
+  } catch (error) {
+    return fail(res, error, 400);
+  }
+});
+
+app.get("/api/ai/:symbol", async (req, res) => {
+  try {
+    const rawSymbol = String(req.params.symbol || "BTC");
+    const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawSymbol);
+    const market = await buildMarketContext(baseSymbol, quoteSymbol);
+    const text = await askAI(
+      `Дай аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
+      market
+    );
+
+    return ok(res, {
+      symbol: baseSymbol,
+      pair: displayPair,
+      text
     });
   } catch (error) {
     return fail(res, error, 400);
