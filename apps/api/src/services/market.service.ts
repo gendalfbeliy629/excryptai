@@ -63,8 +63,14 @@ export type MarketContext = {
     low30d: number | null;
     change30d: number | null;
     rsi14: number | null;
+    adx14: number | null;
     sma7: number | null;
     sma30: number | null;
+    ema20: number | null;
+    ema50: number | null;
+    macdLine: number | null;
+    macdSignal: number | null;
+    macdHistogram: number | null;
     trend30d: TrendType;
     candles: OHLCItem[];
     intraday1h: {
@@ -73,6 +79,13 @@ export type MarketContext = {
       ema20: number | null;
       ema50: number | null;
       atr14: number | null;
+      adx14: number | null;
+      macdLine: number | null;
+      macdSignal: number | null;
+      macdHistogram: number | null;
+      bbBasis20: number | null;
+      bbUpper20: number | null;
+      bbLower20: number | null;
       avgVolume20: number | null;
       volumeRatio: number | null;
       latestVolume: number | null;
@@ -85,6 +98,10 @@ export type MarketContext = {
       ema20: number | null;
       ema50: number | null;
       atr14: number | null;
+      adx14: number | null;
+      macdLine: number | null;
+      macdSignal: number | null;
+      macdHistogram: number | null;
       avgVolume20: number | null;
       volumeRatio: number | null;
     };
@@ -92,6 +109,7 @@ export type MarketContext = {
       nearestResistance: number | null;
       nextResistance: number | null;
       nearestSupport: number | null;
+      secondarySupport: number | null;
       roomToResistancePercent: number | null;
       pullbackFromResistancePercent: number | null;
     };
@@ -238,8 +256,7 @@ function calculateEMA(values: number[], period: number): number | null {
   if (values.length < period) return null;
 
   const multiplier = 2 / (period + 1);
-  let ema =
-    values.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+  let ema = values.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
 
   for (let i = period; i < values.length; i++) {
     ema = values[i] * multiplier + ema * (1 - multiplier);
@@ -268,8 +285,7 @@ function calculateATR(candles: OHLCItem[], period = 14): number | null {
 
   if (ranges.length < period) return null;
 
-  let atr =
-    ranges.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+  let atr = ranges.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
 
   for (let i = period; i < ranges.length; i++) {
     atr = (atr * (period - 1) + ranges[i]) / period;
@@ -320,10 +336,7 @@ function latestVolumeRatio(candles: OHLCItem[]) {
   }
 
   const latestVolume = volumes[volumes.length - 1] ?? null;
-  const history = volumes.slice(
-    Math.max(0, volumes.length - 21),
-    volumes.length - 1
-  );
+  const history = volumes.slice(Math.max(0, volumes.length - 21), volumes.length - 1);
   const avgVolume20 = average(history);
   const ratio =
     latestVolume !== null && avgVolume20 !== null && avgVolume20 > 0
@@ -383,23 +396,29 @@ function collectSwingLows(candles: OHLCItem[], left = 2, right = 2): number[] {
   return levels;
 }
 
-function selectResistanceLevels(
-  price: number,
-  candles1h: OHLCItem[],
-  candles4h: OHLCItem[]
-) {
-  const merged = [...collectSwingHighs(candles1h), ...collectSwingHighs(candles4h)]
-    .filter((level) => level > price)
-    .sort((a, b) => a - b);
-
+function dedupeNearbyLevels(levels: number[], tolerance = 0.004): number[] {
   const deduped: number[] = [];
 
-  for (const level of merged) {
+  for (const level of levels) {
     const last = deduped[deduped.length - 1];
-    if (!last || Math.abs(level - last) / last > 0.0035) {
+    if (!last || Math.abs(level - last) / last > tolerance) {
       deduped.push(level);
     }
   }
+
+  return deduped;
+}
+
+function selectResistanceLevels(price: number, candles1h: OHLCItem[], candles4h: OHLCItem[], candles1d: OHLCItem[]) {
+  const merged = [
+    ...collectSwingHighs(candles1h),
+    ...collectSwingHighs(candles4h),
+    ...collectSwingHighs(candles1d, 1, 1),
+  ]
+    .filter((level) => level > price)
+    .sort((a, b) => a - b);
+
+  const deduped = dedupeNearbyLevels(merged, 0.0045);
 
   return {
     nearestResistance: deduped[0] ?? null,
@@ -407,16 +426,127 @@ function selectResistanceLevels(
   };
 }
 
-function selectSupport(
-  price: number,
-  candles1h: OHLCItem[],
-  candles4h: OHLCItem[]
-) {
-  const merged = [...collectSwingLows(candles1h), ...collectSwingLows(candles4h)]
+function selectSupportLevels(price: number, candles1h: OHLCItem[], candles4h: OHLCItem[], candles1d: OHLCItem[]) {
+  const merged = [
+    ...collectSwingLows(candles1h),
+    ...collectSwingLows(candles4h),
+    ...collectSwingLows(candles1d, 1, 1),
+  ]
     .filter((level) => level < price)
     .sort((a, b) => b - a);
 
-  return merged[0] ?? null;
+  const deduped = dedupeNearbyLevels(merged, 0.0045);
+
+  return {
+    nearestSupport: deduped[0] ?? null,
+    secondarySupport: deduped[1] ?? deduped[0] ?? null,
+  };
+}
+
+function calculateMACD(values: number[]) {
+  const ema12 = calculateEMA(values, 12);
+  const ema26 = calculateEMA(values, 26);
+
+  if (ema12 === null || ema26 === null) {
+    return { line: null, signal: null, histogram: null };
+  }
+
+  const macdSeries: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const slice = values.slice(0, i + 1);
+    const fast = calculateEMA(slice, 12);
+    const slow = calculateEMA(slice, 26);
+    if (fast !== null && slow !== null) {
+      macdSeries.push(fast - slow);
+    }
+  }
+
+  const signal = calculateEMA(macdSeries, 9);
+  const line = ema12 - ema26;
+  const histogram = signal !== null ? line - signal : null;
+
+  return { line, signal, histogram };
+}
+
+function calculateADX(candles: OHLCItem[], period = 14): number | null {
+  if (candles.length <= period * 2) return null;
+
+  const trs: number[] = [];
+  const plusDMs: number[] = [];
+  const minusDMs: number[] = [];
+
+  for (let i = 1; i < candles.length; i++) {
+    const current = candles[i];
+    const previous = candles[i - 1];
+
+    const upMove = current.high - previous.high;
+    const downMove = previous.low - current.low;
+
+    const plusDM = upMove > downMove && upMove > 0 ? upMove : 0;
+    const minusDM = downMove > upMove && downMove > 0 ? downMove : 0;
+    const tr = Math.max(
+      current.high - current.low,
+      Math.abs(current.high - previous.close),
+      Math.abs(current.low - previous.close)
+    );
+
+    trs.push(tr);
+    plusDMs.push(plusDM);
+    minusDMs.push(minusDM);
+  }
+
+  if (trs.length < period) return null;
+
+  let atr = trs.slice(0, period).reduce((acc, value) => acc + value, 0);
+  let plusDM = plusDMs.slice(0, period).reduce((acc, value) => acc + value, 0);
+  let minusDM = minusDMs.slice(0, period).reduce((acc, value) => acc + value, 0);
+
+  const dxValues: number[] = [];
+
+  for (let i = period; i < trs.length; i++) {
+    atr = atr - atr / period + trs[i];
+    plusDM = plusDM - plusDM / period + plusDMs[i];
+    minusDM = minusDM - minusDM / period + minusDMs[i];
+
+    if (atr <= 0) continue;
+
+    const plusDI = (plusDM / atr) * 100;
+    const minusDI = (minusDM / atr) * 100;
+    const denominator = plusDI + minusDI;
+
+    if (denominator <= 0) continue;
+
+    const dx = (Math.abs(plusDI - minusDI) / denominator) * 100;
+    dxValues.push(dx);
+  }
+
+  if (dxValues.length < period) return null;
+
+  let adx = dxValues.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+
+  for (let i = period; i < dxValues.length; i++) {
+    adx = (adx * (period - 1) + dxValues[i]) / period;
+  }
+
+  return adx;
+}
+
+function calculateBollinger(values: number[], period = 20, multiplier = 2) {
+  if (values.length < period) {
+    return { basis: null, upper: null, lower: null };
+  }
+
+  const slice = values.slice(values.length - period);
+  const basis = slice.reduce((acc, value) => acc + value, 0) / period;
+  const variance =
+    slice.reduce((acc, value) => acc + Math.pow(value - basis, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    basis,
+    upper: basis + stdDev * multiplier,
+    lower: basis - stdDev * multiplier,
+  };
 }
 
 async function getQuoteUsdPrice(quoteSymbol: string): Promise<number | null> {
@@ -480,12 +610,7 @@ export async function getOHLC(
 ): Promise<OHLCItem[]> {
   const baseSymbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
-  const candles = await getPionexKlines(
-    baseSymbol,
-    quoteSymbol,
-    "1D",
-    Math.max(limit, 35)
-  );
+  const candles = await getPionexKlines(baseSymbol, quoteSymbol, "1D", Math.max(limit, 35));
 
   return toOHLC(candles).slice(-limit);
 }
@@ -519,32 +644,20 @@ export async function buildMarketContext(
     : Promise.resolve(null);
 
   const quoteUsdPromise = getQuoteUsdPrice(quoteSymbol);
-  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() =>
-    fallbackLiquidity()
-  );
-  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() =>
-    fallbackSentiment()
-  );
+  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() => fallbackLiquidity());
+  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() => fallbackSentiment());
 
-  const [
-    dailyRaw,
-    candles1hRaw,
-    candles4hRaw,
-    depth,
-    assetSpot,
-    quoteUsdPrice,
-    liquidity,
-    sentiment,
-  ] = await Promise.all([
-    getPionexKlines(baseSymbol, quoteSymbol, "1D", 35),
-    getPionexKlines(baseSymbol, quoteSymbol, "60M", 140),
-    getPionexKlines(baseSymbol, quoteSymbol, "4H", 140),
-    depthPromise,
-    assetSpotPromise,
-    quoteUsdPromise,
-    liquidityPromise,
-    sentimentPromise,
-  ]);
+  const [dailyRaw, candles1hRaw, candles4hRaw, depth, assetSpot, quoteUsdPrice, liquidity, sentiment] =
+    await Promise.all([
+      getPionexKlines(baseSymbol, quoteSymbol, "1D", 35),
+      getPionexKlines(baseSymbol, quoteSymbol, "60M", 140),
+      getPionexKlines(baseSymbol, quoteSymbol, "4H", 140),
+      depthPromise,
+      assetSpotPromise,
+      quoteUsdPromise,
+      liquidityPromise,
+      sentimentPromise,
+    ]);
 
   const ticker =
     options.ticker ??
@@ -595,23 +708,29 @@ export async function buildMarketContext(
 
   const sma7 = calculateSMA(dailyCloses, 7);
   const sma30 = calculateSMA(dailyCloses, 30);
+  const ema20_1d = calculateEMA(dailyCloses, 20);
+  const ema50_1d = calculateEMA(dailyCloses, 50);
+  const dailyMacd = calculateMACD(dailyCloses);
   const rsi14 = calculateRSI(dailyCloses, 14);
-  const change30d = calculatePercentChange(
-    dailyCloses[0],
-    dailyCloses[dailyCloses.length - 1]
-  );
+  const adx14 = calculateADX(candles, 14);
+  const change30d = calculatePercentChange(dailyCloses[0], dailyCloses[dailyCloses.length - 1]);
   const trend30d = detectTrend(dailyCloses, sma7, sma30);
 
   const ema20_1h = calculateEMA(closes1h, 20);
   const ema50_1h = calculateEMA(closes1h, 50);
   const atr14_1h = calculateATR(candles1h, 14);
   const rsi14_1h = calculateRSI(closes1h, 14);
+  const adx14_1h = calculateADX(candles1h, 14);
+  const macd1h = calculateMACD(closes1h);
+  const bb1h = calculateBollinger(closes1h, 20, 2);
   const volume1h = latestVolumeRatio(candles1h);
 
   const ema20_4h = calculateEMA(closes4h, 20);
   const ema50_4h = calculateEMA(closes4h, 50);
   const atr14_4h = calculateATR(candles4h, 14);
   const rsi14_4h = calculateRSI(closes4h, 14);
+  const adx14_4h = calculateADX(candles4h, 14);
+  const macd4h = calculateMACD(closes4h);
   const volume4h = latestVolumeRatio(candles4h);
 
   const highs = candles.map((c) => c.high);
@@ -620,17 +739,8 @@ export async function buildMarketContext(
   const recentSwingHigh = Math.max(...candles1h.slice(-24).map((c) => c.high));
   const recentSwingLow = Math.min(...candles1h.slice(-24).map((c) => c.low));
 
-  const resistanceLevels = selectResistanceLevels(
-    price,
-    candles1h.slice(0, -2),
-    candles4h.slice(0, -1)
-  );
-
-  const nearestSupport = selectSupport(
-    price,
-    candles1h.slice(0, -1),
-    candles4h.slice(0, -1)
-  );
+  const resistanceLevels = selectResistanceLevels(price, candles1h.slice(0, -2), candles4h.slice(0, -1), candles.slice(0, -1));
+  const supportLevels = selectSupportLevels(price, candles1h.slice(0, -1), candles4h.slice(0, -1), candles.slice(0, -1));
 
   const roomToResistancePercent = resistanceLevels.nearestResistance
     ? calculatePercentChange(price, resistanceLevels.nearestResistance)
@@ -648,13 +758,11 @@ export async function buildMarketContext(
     ? getOrderBookNotional(depth, 10)
     : { bidNotional: null, askNotional: null };
 
-  const totalNotional =
-    (notionals.bidNotional ?? 0) + (notionals.askNotional ?? 0);
+  const totalNotional = (notionals.bidNotional ?? 0) + (notionals.askNotional ?? 0);
 
   const orderBookImbalance =
     totalNotional > 0
-      ? ((notionals.bidNotional ?? 0) - (notionals.askNotional ?? 0)) /
-        totalNotional
+      ? ((notionals.bidNotional ?? 0) - (notionals.askNotional ?? 0)) / totalNotional
       : null;
 
   const sellWallPressure =
@@ -691,8 +799,14 @@ export async function buildMarketContext(
       low30d: lows.length ? Math.min(...lows) : null,
       change30d,
       rsi14,
+      adx14,
       sma7,
       sma30,
+      ema20: ema20_1d,
+      ema50: ema50_1d,
+      macdLine: dailyMacd.line,
+      macdSignal: dailyMacd.signal,
+      macdHistogram: dailyMacd.histogram,
       trend30d,
       candles,
       intraday1h: {
@@ -701,6 +815,13 @@ export async function buildMarketContext(
         ema20: ema20_1h,
         ema50: ema50_1h,
         atr14: atr14_1h,
+        adx14: adx14_1h,
+        macdLine: macd1h.line,
+        macdSignal: macd1h.signal,
+        macdHistogram: macd1h.histogram,
+        bbBasis20: bb1h.basis,
+        bbUpper20: bb1h.upper,
+        bbLower20: bb1h.lower,
         avgVolume20: volume1h.avgVolume20,
         volumeRatio: volume1h.ratio,
         latestVolume: volume1h.latestVolume,
@@ -713,13 +834,18 @@ export async function buildMarketContext(
         ema20: ema20_4h,
         ema50: ema50_4h,
         atr14: atr14_4h,
+        adx14: adx14_4h,
+        macdLine: macd4h.line,
+        macdSignal: macd4h.signal,
+        macdHistogram: macd4h.histogram,
         avgVolume20: volume4h.avgVolume20,
         volumeRatio: volume4h.ratio,
       },
       structure: {
         nearestResistance: resistanceLevels.nearestResistance,
         nextResistance: resistanceLevels.nextResistance,
-        nearestSupport,
+        nearestSupport: supportLevels.nearestSupport,
+        secondarySupport: supportLevels.secondarySupport,
         roomToResistancePercent,
         pullbackFromResistancePercent,
       },

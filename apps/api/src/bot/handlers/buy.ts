@@ -41,6 +41,24 @@ function formatNullable(value: number | null, digits = 2): string {
   return value.toFixed(digits);
 }
 
+function formatUnixTime(value: number | null): string {
+  if (!value || !Number.isFinite(value)) return "n/a";
+  return new Date(value).toISOString().replace(".000Z", "Z");
+}
+
+function formatConfirmationStrategy(strategy: string): string {
+  switch (strategy) {
+    case "1H_CANDLE_CLOSE":
+      return "1H candle close";
+    case "1H_RETEST":
+      return "retest";
+    case "1H_BREAKOUT_RETEST":
+      return "breakout-retest";
+    default:
+      return "n/a";
+  }
+}
+
 function buildFailedMarketsBlock(
   failedDetails: FailedMarketDetail[],
   maxItems = 12
@@ -69,6 +87,11 @@ function buildBuyCard(item: BuyCandidate): string {
     `Биржа / данные: ${item.exchange}`,
     `Текущая цена: ${formatValue(item.price, q)}`,
     `Зона входа: ${formatValue(item.entryFrom, q)} - ${formatValue(item.entryTo, q)}`,
+    `Подтверждение входа: ${formatConfirmationStrategy(item.entryConfirmationStrategy)} | статус ${item.entryConfirmationStatus}`,
+    `Последний закрытый 1H candle: ${item.lastClosed1hCandleClose !== null ? formatValue(item.lastClosed1hCandleClose, q) : "n/a"} | время ${formatUnixTime(item.lastClosed1hCandleTime)}`,
+    `Уровень подтверждения: ${item.confirmationLevel !== null ? formatValue(item.confirmationLevel, q) : "n/a"} | retest: ${item.confirmationRetestLevel !== null ? formatValue(item.confirmationRetestLevel, q) : "n/a"}`,
+    `Breakout-уровень: ${item.confirmationBreakoutLevel !== null ? formatValue(item.confirmationBreakoutLevel, q) : "n/a"}`,
+    `Комментарий confirm-layer: ${item.entryConfirmationText}`,
     `Начальный stop-loss: ${formatValue(item.initialStopLoss, q)} (-${item.riskPercent.toFixed(2)}%)`,
     `TP1: ${formatValue(item.tp1, q)} (${formatPercent(item.tp1Percent)}) | R/R 1:${item.riskRewardTp1.toFixed(2)}`,
     `TP2: ${formatValue(item.tp2, q)} (${formatPercent(item.tp2Percent)}) | R/R 1:${item.riskRewardTp2.toFixed(2)}`,
@@ -94,7 +117,7 @@ export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
       await ctx.reply(
-        "Сканирую Pionex staged scan: stage 1 = все tickers/bookTickers, stage 2 = полный анализ только лучших кандидатов через rate limiter..."
+        "Сканирую Pionex staged scan: stage 1 = все tickers/bookTickers, stage 2 = полный анализ только лучших кандидатов через rate limiter, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
       );
 
       const result = await getBuyScanResult(10);
@@ -105,7 +128,7 @@ export function registerBuyHandler(bot: Telegraf) {
         `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
         `- Полностью проанализировано: ${result.summary.analyzedMarkets}`,
         `- Ошибок полного анализа: ${result.summary.failedMarkets}`,
-        `- BUY: ${result.summary.buyCount}`,
+        `- BUY после confirm-layer: ${result.summary.buyCount}`,
         `- HOLD: ${result.summary.holdCount}`,
         `- SELL: ${result.summary.sellCount}`,
         `- BULLISH: ${result.summary.bullishCount}`,
