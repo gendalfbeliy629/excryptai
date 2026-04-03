@@ -59,12 +59,19 @@ function formatConfirmationStrategy(strategy: string): string {
   }
 }
 
+function joinMessageSections(sections: Array<string | null | undefined | false>): string {
+  return sections
+    .map((section) => (typeof section === "string" ? section.trim() : ""))
+    .filter((section) => section.length > 0)
+    .join("\n\n");
+}
+
 function buildFailedMarketsBlock(
   failedDetails: FailedMarketDetail[],
   maxItems = 12
 ): string {
   if (!failedDetails.length) {
-    return "Ошибок анализа нет.";
+    return "";
   }
 
   const lines = failedDetails
@@ -76,6 +83,37 @@ function buildFailedMarketsBlock(
   }
 
   return lines.join("\n");
+}
+
+function buildFailedMarketsSection(failedDetails: FailedMarketDetail[]): string {
+  if (!failedDetails.length) {
+    return "";
+  }
+
+  return joinMessageSections([
+    "Какие рынки не удалось проверить и почему:",
+    buildFailedMarketsBlock(failedDetails),
+  ]);
+}
+
+function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>): string {
+  const summaryLines = [
+    `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
+    `- Stage 1 проверено быстрым фильтром: ${result.summary.stage1Checked}`,
+    `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
+    `- Полностью проанализировано: ${result.summary.analyzedMarkets}`,
+    `- Ошибок полного анализа: ${result.summary.failedMarkets}`,
+    `- BUY после confirm-layer: ${result.summary.buyCount}`,
+    `- HOLD: ${result.summary.holdCount}`,
+    `- SELL: ${result.summary.sellCount}`,
+    `- BULLISH: ${result.summary.bullishCount}`,
+    `- SIDEWAYS: ${result.summary.sidewaysCount}`,
+    `- BEARISH: ${result.summary.bearishCount}`,
+    `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
+    `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
+  ];
+
+  return summaryLines.join("\n");
 }
 
 function buildBuyCard(item: BuyCandidate): string {
@@ -122,54 +160,35 @@ export function registerBuyHandler(bot: Telegraf) {
 
       const result = await getBuyScanResult(10);
 
-      const summaryLines = [
-        `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
-        `- Stage 1 проверено быстрым фильтром: ${result.summary.stage1Checked}`,
-        `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
-        `- Полностью проанализировано: ${result.summary.analyzedMarkets}`,
-        `- Ошибок полного анализа: ${result.summary.failedMarkets}`,
-        `- BUY после confirm-layer: ${result.summary.buyCount}`,
-        `- HOLD: ${result.summary.holdCount}`,
-        `- SELL: ${result.summary.sellCount}`,
-        `- BULLISH: ${result.summary.bullishCount}`,
-        `- SIDEWAYS: ${result.summary.sidewaysCount}`,
-        `- BEARISH: ${result.summary.bearishCount}`,
-        `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
-        `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
-      ];
-
-      const failedBlock = buildFailedMarketsBlock(result.summary.failedDetails);
+      const summaryBlock = buildSummaryBlock(result);
+      const failedSection = buildFailedMarketsSection(result.summary.failedDetails);
 
       if (!result.buys.length) {
-        const message = [
+        const message = joinMessageSections([
           "⚪ Сейчас покупать нечего.",
-          "",
-          "Что происходит на рынке:",
-          ...summaryLines,
-          "",
+          joinMessageSections([
+            "Что происходит на рынке:",
+            summaryBlock,
+          ]),
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
-          "",
-          "Какие рынки не удалось проверить и почему:",
-          failedBlock,
-        ].join("\n");
+          failedSection,
+        ]);
 
         await ctx.reply(message);
         return;
       }
 
-      const lines = result.buys.map((item: BuyCandidate) => buildBuyCard(item));
+      const buyCards = result.buys.map((item: BuyCandidate) => buildBuyCard(item)).join("\n\n");
 
-      const message = [
+      const message = joinMessageSections([
         "🟢 Пары с подтвержденным сигналом BUY",
-        "",
-        "Сводка staged scan:",
-        ...summaryLines,
-        "",
-        "Какие рынки не удалось проверить и почему:",
-        failedBlock,
-        "",
-        ...lines,
-      ].join("\n\n");
+        joinMessageSections([
+          "Сводка staged scan:",
+          summaryBlock,
+        ]),
+        failedSection,
+        buyCards,
+      ]);
 
       await ctx.reply(message);
     } catch (error) {
