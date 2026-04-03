@@ -1,6 +1,14 @@
 import { buildMarketContext, TrendType } from "./market.service";
+import {
+  getAllPionexSpotBookTickers,
+  getAllPionexSpotMarkets,
+  getAllPionexSpotTickers,
+  getPionexDepth,
+  PionexBookTicker,
+  PionexSpotMarket,
+  PionexTicker,
+} from "./pionex.service";
 import { evaluateMarketSignal } from "./signal.service";
-import { getAllPionexSpotMarkets, PionexSpotMarket } from "./pionex.service";
 
 export type BuyCandidate = {
   rank: number;
@@ -52,10 +60,12 @@ type ScanItemResult =
       status: "ok";
       market: PionexSpotMarket;
       evaluation: RawEvaluation;
+      stage: "full";
     }
   | {
       status: "failed";
       market: PionexSpotMarket;
+      stage: "full";
       error: string;
     };
 
@@ -66,6 +76,8 @@ export type FailedMarketDetail = {
 
 export type BuyMarketSummary = {
   totalSpotMarkets: number;
+  stage1Checked: number;
+  stage2Candidates: number;
   totalChecked: number;
   analyzedMarkets: number;
   failedMarkets: number;
@@ -84,6 +96,14 @@ export type BuyMarketSummary = {
 export type BuyScanResult = {
   buys: BuyCandidate[];
   summary: BuyMarketSummary;
+};
+
+type Stage1Candidate = {
+  market: PionexSpotMarket;
+  ticker: PionexTicker;
+  bookTicker: PionexBookTicker | null;
+  stage1Score: number;
+  spreadPercent: number | null;
 };
 
 async function mapWithConcurrency<TInput, TOutput>(
@@ -140,6 +160,76 @@ function normalizeErrorReason(error: unknown): string {
   }
 
   return "Unknown scan error";
+}
+
+function buildStage1Candidates(
+  markets: PionexSpotMarket[],
+  tickers: PionexTicker[],
+  bookTickers: PionexBookTicker[]
+): Stage1Candidate[] {
+  const tickerMap = new Map<string, PionexTicker>(
+    tickers.map((item) => [item.symbol, item])
+  );
+
+  const bookTickerMap = new Map<string, PionexBookTicker>(
+    bookTickers.map((item) => [item.symbol, item])
+  );
+
+  const candidates: Stage1Candidate[] = [];
+
+  for (const market of markets) {
+    const ticker = tickerMap.get(market.symbol);
+    if (!ticker) {
+      continue;
+    }
+
+    const bookTicker = bookTickerMap.get(market.symbol) ?? null;
+    const spreadPercent =
+      bookTicker && bookTicker.askPrice > 0
+        ? ((bookTicker.askPrice - bookTicker.bidPrice) / bookTicker.askPrice) * 100
+        : null;
+
+    let score = 0;
+
+    if (ticker.changePercent24h !== null) {
+      if (ticker.changePercent24h >= -4 && ticker.changePercent24h <= 12) score += 12;
+      else if (ticker.changePercent24h > 12) score += 4;
+      else score -= 6;
+    }
+
+    if (ticker.amount > 0) {
+      if (ticker.amount >= 5_000_000) score += 14;
+      else if (ticker.amount >= 1_000_000) score += 10;
+      else if (ticker.amount >= 250_000) score += 6;
+      else score += 2;
+    }
+
+    if (spreadPercent !== null) {
+      if (spreadPercent <= 0.15) score += 8;
+      else if (spreadPercent <= 0.3) score += 4;
+      else score -= 8;
+    }
+
+    const intradayRangePercent =
+      ticker.close > 0 ? ((ticker.high - ticker.low) / ticker.close) * 100 : 0;
+
+    if (intradayRangePercent >= 1.5 && intradayRangePercent <= 15) {
+      score += 6;
+    }
+
+    candidates.push({
+      market,
+      ticker,
+      bookTicker,
+      stage1Score: score,
+      spreadPercent,
+    });
+  }
+
+  candidates.sort((a, b) => b.stage1Score - a.stage1Score);
+
+  const dynamicLimit = Math.max(40, Math.min(120, Math.ceil(candidates.length * 0.22)));
+  return candidates.slice(0, dynamicLimit);
 }
 
 function buildTradePlan(
@@ -274,18 +364,18 @@ function buildNoBuyExplanation(summary: BuyMarketSummary): string {
   const reasons: string[] = [];
 
   if (summary.buyCount > 0) {
-    return "На рынке есть пары, которые прошли фильтры regime + setup + space + execution.";
+    return "На рынке есть пары, которые прошли staged scan и full validation.";
   }
 
   if (summary.failedMarkets > 0) {
-    reasons.push(`часть рынков не удалось проанализировать (${summary.failedMarkets})`);
+    reasons.push(`часть кандидатов не удалось доанализировать (${summary.failedMarkets})`);
   }
 
   if (
     summary.sidewaysCount >= summary.bullishCount &&
     summary.sidewaysCount >= summary.bearishCount
   ) {
-    reasons.push("рынок в основном боковой");
+    reasons.push("после полного анализа рынок в основном боковой");
   }
 
   if (summary.bearishCount > summary.bullishCount) {
@@ -300,19 +390,23 @@ function buildNoBuyExplanation(summary: BuyMarketSummary): string {
     summary.avgRsi14 !== null &&
     (summary.avgRsi14 > 68 || summary.avgRsi14 < 44)
   ) {
-    reasons.push("RSI по рынку уходит из комфортной зоны");
+    reasons.push("RSI по лучшим кандидатам уходит из комфортной зоны");
   }
 
   if (!reasons.length) {
     reasons.push(
-      "рынки не проходят фильтры по room-to-resistance, 4H/1H структуре и качеству исполнения"
+      "кандидаты не проходят фильтры по room-to-resistance, 4H/1H структуре и качеству исполнения"
     );
   }
 
   return reasons.join(", ");
 }
 
-function toSummary(scanResults: ScanItemResult[]): BuyMarketSummary {
+function toSummary(
+  totalSpotMarkets: number,
+  stage2Candidates: number,
+  scanResults: ScanItemResult[]
+): BuyMarketSummary {
   const analyzedItems = scanResults
     .filter(
       (item): item is Extract<ScanItemResult, { status: "ok" }> =>
@@ -340,8 +434,10 @@ function toSummary(scanResults: ScanItemResult[]): BuyMarketSummary {
   ).length;
 
   const summary: BuyMarketSummary = {
-    totalSpotMarkets: scanResults.length,
-    totalChecked: scanResults.length,
+    totalSpotMarkets,
+    stage1Checked: totalSpotMarkets,
+    stage2Candidates,
+    totalChecked: totalSpotMarkets,
     analyzedMarkets: analyzedItems.length,
     failedMarkets: failedItems.length,
     buyCount,
@@ -364,16 +460,33 @@ function toSummary(scanResults: ScanItemResult[]): BuyMarketSummary {
 }
 
 export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
-  const markets = await getAllPionexSpotMarkets();
+  const [markets, tickers, bookTickers] = await Promise.all([
+    getAllPionexSpotMarkets(),
+    getAllPionexSpotTickers(),
+    getAllPionexSpotBookTickers(),
+  ]);
+
+  const stage1Candidates = buildStage1Candidates(markets, tickers, bookTickers);
 
   const scanResults = await mapWithConcurrency(
-    markets,
-    3,
-    async (market): Promise<ScanItemResult> => {
+    stage1Candidates,
+    2,
+    async (candidate): Promise<ScanItemResult> => {
       try {
+        const depth = await getPionexDepth(
+          candidate.market.baseSymbol,
+          candidate.market.quoteSymbol,
+          20
+        );
+
         const marketContext = await buildMarketContext(
-          market.baseSymbol,
-          market.quoteSymbol
+          candidate.market.baseSymbol,
+          candidate.market.quoteSymbol,
+          {
+            ticker: candidate.ticker,
+            bookTicker: candidate.bookTicker,
+            depth,
+          }
         );
 
         const evaluation = evaluateMarketSignal(marketContext);
@@ -381,27 +494,30 @@ export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
         if (!evaluation) {
           return {
             status: "failed",
-            market,
+            stage: "full",
+            market: candidate.market,
             error: "Signal evaluation returned null",
           };
         }
 
         return {
           status: "ok",
-          market,
+          stage: "full",
+          market: candidate.market,
           evaluation,
         };
       } catch (error) {
         return {
           status: "failed",
-          market,
+          stage: "full",
+          market: candidate.market,
           error: normalizeErrorReason(error),
         };
       }
     }
   );
 
-  const summary = toSummary(scanResults);
+  const summary = toSummary(markets.length, stage1Candidates.length, scanResults);
 
   const buys: BuyCandidate[] = scanResults
     .filter(

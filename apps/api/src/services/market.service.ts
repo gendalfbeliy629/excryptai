@@ -1,25 +1,17 @@
 import { getSpotPrice } from "./coincap.service";
 import {
   getOrderBookNotional,
-  getPionexBookTicker,
   getPionexDepth,
   getPionexKlines,
-  getPionexTicker,
-  PionexCandle,
+  PionexBookTicker,
+  PionexDepth,
+  PionexTicker,
 } from "./pionex.service";
 import { getLiquiditySnapshot } from "./defillama.service";
 import { getSentimentSnapshot } from "./santiment.service";
 import { normalizeSymbol, SYMBOL_TO_COINCAP_ID } from "../utils/symbols";
 
-export type CoinInfo = {
-  symbol: string;
-  name: string;
-  priceUsd: number | null;
-  change24h: number | null;
-  marketCapUsd: number | null;
-  volume24hUsd: number | null;
-  source: string;
-};
+export type TrendType = "BULLISH" | "BEARISH" | "SIDEWAYS";
 
 export type OHLCItem = {
   time: number;
@@ -31,7 +23,15 @@ export type OHLCItem = {
   volumeTo?: number;
 };
 
-export type TrendType = "BULLISH" | "BEARISH" | "SIDEWAYS";
+export type CoinInfo = {
+  symbol: string;
+  name: string;
+  priceUsd: number | null;
+  change24h: number | null;
+  marketCapUsd: number | null;
+  volume24hUsd: number | null;
+  source: string;
+};
 
 export type ParsedPair = {
   baseSymbol: string;
@@ -56,8 +56,6 @@ export type MarketContext = {
     priceUsd: number | null;
     change24h: number | null;
     marketCapUsd: number | null;
-    volume24hQuote: number | null;
-    quoteUsdPrice: number | null;
   };
   technicals: {
     period: "30d";
@@ -118,6 +116,12 @@ export type MarketContext = {
   };
 };
 
+export type BuildMarketContextOptions = {
+  ticker?: PionexTicker;
+  bookTicker?: PionexBookTicker | null;
+  depth?: PionexDepth | null;
+};
+
 const STABLE_QUOTES = new Set([
   "USD",
   "USDT",
@@ -172,7 +176,17 @@ export function parseMarketPair(rawInput?: string): ParsedPair {
   };
 }
 
-function toOHLC(candles: PionexCandle[]): OHLCItem[] {
+function toOHLC(
+  candles: Array<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    amount: number;
+  }>
+): OHLCItem[] {
   return candles.map((row) => ({
     time: row.time,
     open: row.open,
@@ -217,15 +231,15 @@ function calculateRSI(closes: number[], period = 14): number | null {
 function calculateSMA(values: number[], period: number): number | null {
   if (values.length < period) return null;
   const slice = values.slice(values.length - period);
-  const sum = slice.reduce((acc, value) => acc + value, 0);
-  return sum / period;
+  return slice.reduce((acc, value) => acc + value, 0) / period;
 }
 
 function calculateEMA(values: number[], period: number): number | null {
   if (values.length < period) return null;
 
   const multiplier = 2 / (period + 1);
-  let ema = values.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+  let ema =
+    values.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
 
   for (let i = period; i < values.length; i++) {
     ema = values[i] * multiplier + ema * (1 - multiplier);
@@ -254,7 +268,8 @@ function calculateATR(candles: OHLCItem[], period = 14): number | null {
 
   if (ranges.length < period) return null;
 
-  let atr = ranges.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
+  let atr =
+    ranges.slice(0, period).reduce((acc, value) => acc + value, 0) / period;
 
   for (let i = period; i < ranges.length; i++) {
     atr = (atr * (period - 1) + ranges[i]) / period;
@@ -295,11 +310,7 @@ function average(values: number[]): number | null {
   return values.reduce((acc, value) => acc + value, 0) / values.length;
 }
 
-function latestVolumeRatio(candles: OHLCItem[]): {
-  latestVolume: number | null;
-  avgVolume20: number | null;
-  ratio: number | null;
-} {
+function latestVolumeRatio(candles: OHLCItem[]) {
   const volumes = candles
     .map((item) => item.volumeTo ?? item.volumeFrom ?? 0)
     .filter((value) => value > 0);
@@ -309,14 +320,21 @@ function latestVolumeRatio(candles: OHLCItem[]): {
   }
 
   const latestVolume = volumes[volumes.length - 1] ?? null;
-  const history = volumes.slice(Math.max(0, volumes.length - 21), volumes.length - 1);
+  const history = volumes.slice(
+    Math.max(0, volumes.length - 21),
+    volumes.length - 1
+  );
   const avgVolume20 = average(history);
   const ratio =
     latestVolume !== null && avgVolume20 !== null && avgVolume20 > 0
       ? latestVolume / avgVolume20
       : null;
 
-  return { latestVolume, avgVolume20, ratio };
+  return {
+    latestVolume,
+    avgVolume20,
+    ratio,
+  };
 }
 
 function collectSwingHighs(candles: OHLCItem[], left = 2, right = 2): number[] {
@@ -334,7 +352,9 @@ function collectSwingHighs(candles: OHLCItem[], left = 2, right = 2): number[] {
       }
     }
 
-    if (isSwingHigh) levels.push(current.high);
+    if (isSwingHigh) {
+      levels.push(current.high);
+    }
   }
 
   return levels;
@@ -355,7 +375,9 @@ function collectSwingLows(candles: OHLCItem[], left = 2, right = 2): number[] {
       }
     }
 
-    if (isSwingLow) levels.push(current.low);
+    if (isSwingLow) {
+      levels.push(current.low);
+    }
   }
 
   return levels;
@@ -389,20 +411,12 @@ function selectSupport(
   price: number,
   candles1h: OHLCItem[],
   candles4h: OHLCItem[]
-): number | null {
+) {
   const merged = [...collectSwingLows(candles1h), ...collectSwingLows(candles4h)]
     .filter((level) => level < price)
     .sort((a, b) => b - a);
 
   return merged[0] ?? null;
-}
-
-function fallbackLiquidity(): MarketContext["liquidity"] {
-  return { totalTvlUsd: null, protocolsUsed: [] };
-}
-
-function fallbackSentiment(): MarketContext["sentiment"] {
-  return { socialVolumeTotal: null, socialDominanceLatest: null };
 }
 
 async function getQuoteUsdPrice(quoteSymbol: string): Promise<number | null> {
@@ -424,25 +438,37 @@ async function getQuoteUsdPrice(quoteSymbol: string): Promise<number | null> {
   }
 }
 
+function fallbackLiquidity() {
+  return { totalTvlUsd: null, protocolsUsed: [] as string[] };
+}
+
+function fallbackSentiment() {
+  return { socialVolumeTotal: null, socialDominanceLatest: null };
+}
+
 export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
   const pair = parseMarketPair(symbolInput);
-  const [ticker, quoteUsdPrice, assetSpot] = await Promise.all([
-    getPionexTicker(pair.baseSymbol, pair.quoteSymbol),
+  const [quoteUsdPrice, assetSpot] = await Promise.all([
     getQuoteUsdPrice(pair.quoteSymbol),
     SYMBOL_TO_COINCAP_ID[pair.baseSymbol]
       ? getSpotPrice(pair.baseSymbol).catch(() => null)
       : Promise.resolve(null),
   ]);
 
+  const ticker = await getPionexKlines(pair.baseSymbol, pair.quoteSymbol, "60M", 2)
+    .then((candles) => candles[candles.length - 1])
+    .catch(() => null);
+
+  const price = ticker?.close ?? null;
+  const priceUsd = price !== null && quoteUsdPrice !== null ? price * quoteUsdPrice : null;
+
   return {
     symbol: pair.baseSymbol,
     name: assetSpot?.name ?? pair.baseSymbol,
-    priceUsd:
-      quoteUsdPrice !== null ? ticker.close * quoteUsdPrice : assetSpot?.priceUsd ?? null,
-    change24h: ticker.changePercent24h,
+    priceUsd,
+    change24h: null,
     marketCapUsd: assetSpot?.marketCapUsd ?? null,
-    volume24hUsd:
-      quoteUsdPrice !== null ? ticker.amount * quoteUsdPrice : null,
+    volume24hUsd: null,
     source: "Pionex",
   };
 }
@@ -454,53 +480,95 @@ export async function getOHLC(
 ): Promise<OHLCItem[]> {
   const baseSymbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
-  const candles = await getPionexKlines(baseSymbol, quoteSymbol, "1D", Math.max(limit, 35));
-  return toOHLC(candles);
+  const candles = await getPionexKlines(
+    baseSymbol,
+    quoteSymbol,
+    "1D",
+    Math.max(limit, 35)
+  );
+
+  return toOHLC(candles).slice(-limit);
+}
+
+export async function getCandles(
+  symbolInput: string,
+  limit = 30,
+  quoteSymbolInput = "USDT"
+): Promise<OHLCItem[]> {
+  return getOHLC(symbolInput, limit, quoteSymbolInput);
+}
+
+export async function getMarketData(symbolInput: string): Promise<CoinInfo> {
+  return getCoinInfo(symbolInput);
 }
 
 export async function buildMarketContext(
-  symbolInput: string,
-  quoteSymbolInput = "USDT"
+  baseSymbolInput: string,
+  quoteSymbolInput = "USDT",
+  options: BuildMarketContextOptions = {}
 ): Promise<MarketContext> {
-  const baseSymbol = normalizeSymbol(symbolInput);
+  const baseSymbol = normalizeSymbol(baseSymbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
 
-  const tickerPromise = getPionexTicker(baseSymbol, quoteSymbol);
-  const dailyPromise = getPionexKlines(baseSymbol, quoteSymbol, "1D", 35);
-  const candles1hPromise = getPionexKlines(baseSymbol, quoteSymbol, "60M", 140);
-  const candles4hPromise = getPionexKlines(baseSymbol, quoteSymbol, "4H", 140);
-  const bookTickerPromise = getPionexBookTicker(baseSymbol, quoteSymbol).catch(() => null);
-  const depthPromise = getPionexDepth(baseSymbol, quoteSymbol, 20).catch(() => null);
-  const quoteUsdPricePromise = getQuoteUsdPrice(quoteSymbol);
+  const depthPromise = options.depth
+    ? Promise.resolve(options.depth)
+    : getPionexDepth(baseSymbol, quoteSymbol, 20).catch(() => null);
+
   const assetSpotPromise = SYMBOL_TO_COINCAP_ID[baseSymbol]
     ? getSpotPrice(baseSymbol).catch(() => null)
     : Promise.resolve(null);
-  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() => fallbackLiquidity());
-  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() => fallbackSentiment());
+
+  const quoteUsdPromise = getQuoteUsdPrice(quoteSymbol);
+  const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() =>
+    fallbackLiquidity()
+  );
+  const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() =>
+    fallbackSentiment()
+  );
 
   const [
-    ticker,
     dailyRaw,
     candles1hRaw,
     candles4hRaw,
-    bookTicker,
     depth,
-    quoteUsdPrice,
     assetSpot,
+    quoteUsdPrice,
     liquidity,
     sentiment,
   ] = await Promise.all([
-    tickerPromise,
-    dailyPromise,
-    candles1hPromise,
-    candles4hPromise,
-    bookTickerPromise,
+    getPionexKlines(baseSymbol, quoteSymbol, "1D", 35),
+    getPionexKlines(baseSymbol, quoteSymbol, "60M", 140),
+    getPionexKlines(baseSymbol, quoteSymbol, "4H", 140),
     depthPromise,
-    quoteUsdPricePromise,
     assetSpotPromise,
+    quoteUsdPromise,
     liquidityPromise,
     sentimentPromise,
   ]);
+
+  const ticker =
+    options.ticker ??
+    (() => {
+      const last = candles1hRaw[candles1hRaw.length - 1];
+      if (!last) {
+        throw new Error(`Ticker is required for ${baseSymbol}/${quoteSymbol}`);
+      }
+
+      return {
+        symbol: `${baseSymbol}_${quoteSymbol}`,
+        baseSymbol,
+        quoteSymbol,
+        open: last.open,
+        close: last.close,
+        high: last.high,
+        low: last.low,
+        volume: last.volume,
+        amount: last.amount,
+        count: null,
+        changePercent24h: null,
+        time: last.time,
+      } as PionexTicker;
+    })();
 
   const candles = toOHLC(dailyRaw);
   const candles1h = toOHLC(candles1hRaw);
@@ -518,17 +586,20 @@ export async function buildMarketContext(
     throw new Error(`Not enough 4H candles for ${baseSymbol}/${quoteSymbol}`);
   }
 
+  const price = ticker.close;
+  const priceUsd = quoteUsdPrice !== null ? price * quoteUsdPrice : null;
+
   const dailyCloses = candles.map((item) => item.close);
   const closes1h = candles1h.map((item) => item.close);
   const closes4h = candles4h.map((item) => item.close);
 
-  const firstClose = dailyCloses[0];
-  const lastClose = dailyCloses[dailyCloses.length - 1];
-
   const sma7 = calculateSMA(dailyCloses, 7);
   const sma30 = calculateSMA(dailyCloses, 30);
-  const change30d =
-    firstClose && lastClose ? calculatePercentChange(firstClose, lastClose) : null;
+  const rsi14 = calculateRSI(dailyCloses, 14);
+  const change30d = calculatePercentChange(
+    dailyCloses[0],
+    dailyCloses[dailyCloses.length - 1]
+  );
   const trend30d = detectTrend(dailyCloses, sma7, sma30);
 
   const ema20_1h = calculateEMA(closes1h, 20);
@@ -543,34 +614,35 @@ export async function buildMarketContext(
   const rsi14_4h = calculateRSI(closes4h, 14);
   const volume4h = latestVolumeRatio(candles4h);
 
-  const highs = candles.map((c) => c.high).filter(Number.isFinite);
-  const lows = candles.map((c) => c.low).filter(Number.isFinite);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+
   const recentSwingHigh = Math.max(...candles1h.slice(-24).map((c) => c.high));
   const recentSwingLow = Math.min(...candles1h.slice(-24).map((c) => c.low));
 
   const resistanceLevels = selectResistanceLevels(
-    ticker.close,
+    price,
     candles1h.slice(0, -2),
     candles4h.slice(0, -1)
   );
+
   const nearestSupport = selectSupport(
-    ticker.close,
+    price,
     candles1h.slice(0, -1),
     candles4h.slice(0, -1)
   );
 
   const roomToResistancePercent = resistanceLevels.nearestResistance
-    ? calculatePercentChange(ticker.close, resistanceLevels.nearestResistance)
+    ? calculatePercentChange(price, resistanceLevels.nearestResistance)
     : null;
 
   const pullbackFromResistancePercent = resistanceLevels.nearestResistance
-    ? calculatePercentChange(resistanceLevels.nearestResistance, ticker.close)
+    ? calculatePercentChange(resistanceLevels.nearestResistance, price)
     : null;
 
-  const bestBid = bookTicker?.bidPrice ?? ticker.close;
-  const bestAsk = bookTicker?.askPrice ?? ticker.close;
-  const spreadPercent =
-    bestAsk > 0 ? ((bestAsk - bestBid) / bestAsk) * 100 : null;
+  const bestBid = options.bookTicker?.bidPrice ?? price;
+  const bestAsk = options.bookTicker?.askPrice ?? price;
+  const spreadPercent = bestAsk > 0 ? ((bestAsk - bestBid) / bestAsk) * 100 : null;
 
   const notionals = depth
     ? getOrderBookNotional(depth, 10)
@@ -581,7 +653,8 @@ export async function buildMarketContext(
 
   const orderBookImbalance =
     totalNotional > 0
-      ? ((notionals.bidNotional ?? 0) - (notionals.askNotional ?? 0)) / totalNotional
+      ? ((notionals.bidNotional ?? 0) - (notionals.askNotional ?? 0)) /
+        totalNotional
       : null;
 
   const sellWallPressure =
@@ -607,19 +680,17 @@ export async function buildMarketContext(
       exchange: "PIONEX",
     },
     spot: {
-      price: ticker.close,
-      priceUsd: quoteUsdPrice !== null ? ticker.close * quoteUsdPrice : null,
+      price,
+      priceUsd,
       change24h: ticker.changePercent24h,
       marketCapUsd: assetSpot?.marketCapUsd ?? null,
-      volume24hQuote: ticker.amount,
-      quoteUsdPrice,
     },
     technicals: {
       period: "30d",
       high30d: highs.length ? Math.max(...highs) : null,
       low30d: lows.length ? Math.min(...lows) : null,
       change30d,
-      rsi14: calculateRSI(dailyCloses, 14),
+      rsi14,
       sma7,
       sma30,
       trend30d,
@@ -666,16 +737,4 @@ export async function buildMarketContext(
     liquidity,
     sentiment,
   };
-}
-
-export async function getMarketData(symbol: string) {
-  return getCoinInfo(symbol);
-}
-
-export async function getCandles(
-  symbol: string,
-  limit = 30,
-  quoteSymbolInput = "USDT"
-) {
-  return getOHLC(symbol, limit, quoteSymbolInput);
 }

@@ -61,8 +61,8 @@ function buildFailedMarketsBlock(
 }
 
 function buildBuyCard(item: BuyCandidate): string {
-  const managementText = item.managementPlan.map((step) => `- ${step}`).join("\n");
   const q = item.quoteSymbol;
+  const managementText = item.managementPlan.map((step) => `- ${step}`).join("\n");
 
   return [
     `${item.rank}. ${item.pair} — ${item.signal}`,
@@ -94,16 +94,17 @@ export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
       await ctx.reply(
-        "Сканирую весь доступный Pionex spot market и ищу только пары с подтвержденным BUY: 1D regime + 4H structure + 1H entry + room-to-resistance..."
+        "Сканирую Pionex staged scan: stage 1 = все tickers/bookTickers, stage 2 = полный анализ только лучших кандидатов через rate limiter..."
       );
 
       const result = await getBuyScanResult(10);
 
       const summaryLines = [
         `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
-        `- Попытка проверки: ${result.summary.totalChecked}`,
-        `- Успешно проанализировано: ${result.summary.analyzedMarkets}`,
-        `- Ошибок анализа: ${result.summary.failedMarkets}`,
+        `- Stage 1 проверено быстрым фильтром: ${result.summary.stage1Checked}`,
+        `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
+        `- Полностью проанализировано: ${result.summary.analyzedMarkets}`,
+        `- Ошибок полного анализа: ${result.summary.failedMarkets}`,
         `- BUY: ${result.summary.buyCount}`,
         `- HOLD: ${result.summary.holdCount}`,
         `- SELL: ${result.summary.sellCount}`,
@@ -127,14 +128,6 @@ export function registerBuyHandler(bot: Telegraf) {
           "",
           "Какие рынки не удалось проверить и почему:",
           failedBlock,
-          "",
-          "Что исправлено в новой логике:",
-          "- теперь сканируются все spot-рынки Pionex, а не только USDT",
-          "- статистика считается из одного и того же набора рынков",
-          "- Попытка проверки = Всего рынков",
-          "- Успешно проанализировано + Ошибок анализа = Попытка проверки",
-          "- BUY + HOLD + SELL = Успешно проанализировано",
-          "- BULLISH + SIDEWAYS + BEARISH = Успешно проанализировано",
         ].join("\n");
 
         await ctx.reply(message);
@@ -146,7 +139,7 @@ export function registerBuyHandler(bot: Telegraf) {
       const message = [
         "🟢 Пары с подтвержденным сигналом BUY",
         "",
-        "Сводка сканирования:",
+        "Сводка staged scan:",
         ...summaryLines,
         "",
         "Какие рынки не удалось проверить и почему:",

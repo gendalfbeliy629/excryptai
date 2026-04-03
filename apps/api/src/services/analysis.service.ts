@@ -1,95 +1,104 @@
-import { getCoinInfo, getOHLC } from "./market.service";
+import {
+  CoinInfo,
+  OHLCItem,
+  getCoinInfo,
+  getOHLC,
+  parseMarketPair,
+} from "./market.service";
 
-type AnalysisResult = {
+export type MarketAnalysis = {
+  pair: string;
   symbol: string;
-  currentPrice: number | null;
-  change24h: number | null;
-  marketCapUsd: number | null;
-  volume24hUsd: number | null;
-  trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
-  signal: "BUY" | "SELL" | "HOLD";
+  quoteSymbol: string;
+  coin: CoinInfo;
+  candles: OHLCItem[];
+  latestClose: number | null;
+  high30d: number | null;
+  low30d: number | null;
+  change30d: number | null;
+  averageClose30d: number | null;
+  averageVolume30d: number | null;
   summary: string;
-  candlesCount: number;
 };
 
-function calculateSMA(values: number[], period: number): number | null {
-  if (values.length < period) return null;
-  const slice = values.slice(values.length - period);
-  const sum = slice.reduce((acc, val) => acc + val, 0);
-  return sum / period;
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return values.reduce((acc, value) => acc + value, 0) / values.length;
 }
 
-function getTrend(
-  closePrices: number[]
-): "BULLISH" | "BEARISH" | "SIDEWAYS" {
-  const sma7 = calculateSMA(closePrices, 7);
-  const sma25 = calculateSMA(closePrices, 25);
+function percentChange(from: number, to: number): number | null {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0) {
+    return null;
+  }
 
-  if (sma7 === null || sma25 === null) return "SIDEWAYS";
-
-  if (sma7 > sma25) return "BULLISH";
-  if (sma7 < sma25) return "BEARISH";
-  return "SIDEWAYS";
+  return ((to - from) / from) * 100;
 }
 
-function getSignal(
-  trend: "BULLISH" | "BEARISH" | "SIDEWAYS",
-  change24h: number | null
-): "BUY" | "SELL" | "HOLD" {
-  if (trend === "BULLISH" && (change24h ?? 0) >= 0) return "BUY";
-  if (trend === "BEARISH" && (change24h ?? 0) < 0) return "SELL";
-  return "HOLD";
+function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
 }
 
-function buildSummary(params: {
-  symbol: string;
-  currentPrice: number | null;
-  change24h: number | null;
-  trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
-  signal: "BUY" | "SELL" | "HOLD";
-}): string {
-  const { symbol, currentPrice, change24h, trend, signal } = params;
+export async function analyzeMarket(
+  rawPair = "BTC/USDT"
+): Promise<MarketAnalysis> {
+  const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawPair);
 
-  const priceText =
-    currentPrice !== null ? `$${currentPrice.toFixed(4)}` : "нет данных";
-  const changeText =
-    change24h !== null ? `${change24h.toFixed(2)}%` : "нет данных";
+  const [coin, candles] = await Promise.all([
+    getCoinInfo(displayPair),
+    getOHLC(baseSymbol, 30, quoteSymbol),
+  ]);
 
-  return [
-    `Монета: ${symbol}`,
-    `Текущая цена: ${priceText}`,
-    `Изменение за 24ч: ${changeText}`,
-    `Краткосрочный тренд: ${trend}`,
-    `Сигнал: ${signal}`,
+  const closes: number[] = candles.map((c: OHLCItem) => c.close);
+  const volumes: number[] = candles.map(
+    (c: OHLCItem) => c.volumeTo ?? c.volumeFrom ?? 0
+  );
+
+  const latestClose = closes.length ? closes[closes.length - 1] : null;
+  const high30d = candles.length
+    ? Math.max(...candles.map((c: OHLCItem) => c.high))
+    : null;
+  const low30d = candles.length
+    ? Math.min(...candles.map((c: OHLCItem) => c.low))
+    : null;
+
+  const firstClose = closes.length ? closes[0] : null;
+  const change30d =
+    firstClose !== null && latestClose !== null
+      ? percentChange(firstClose, latestClose)
+      : null;
+
+  const averageClose30d = average(closes);
+  const averageVolume30d = average(volumes);
+
+  const summary = [
+    `Пара: ${displayPair}`,
+    `Цена сейчас: ${coin.priceUsd !== null ? `$${coin.priceUsd.toFixed(6)}` : "n/a"}`,
+    `Изменение за 30д: ${formatPercent(change30d)}`,
+    `High 30д: ${high30d !== null ? high30d.toFixed(8) : "n/a"}`,
+    `Low 30д: ${low30d !== null ? low30d.toFixed(8) : "n/a"}`,
   ].join("\n");
-}
-
-export async function analyzeCoin(symbol: string): Promise<AnalysisResult> {
-  const coin = await getCoinInfo(symbol);
-  const candles = await getOHLC(symbol, 30);
-
-  const closePrices = candles
-    .map((c) => c.close)
-    .filter((v) => Number.isFinite(v) && v > 0);
-
-  const trend = getTrend(closePrices);
-  const signal = getSignal(trend, coin.change24h);
 
   return {
-    symbol: coin.symbol,
-    currentPrice: coin.priceUsd,
-    change24h: coin.change24h,
-    marketCapUsd: coin.marketCapUsd,
-    volume24hUsd: coin.volume24hUsd,
-    trend,
-    signal,
-    summary: buildSummary({
-      symbol: coin.symbol,
-      currentPrice: coin.priceUsd,
-      change24h: coin.change24h,
-      trend,
-      signal,
-    }),
-    candlesCount: candles.length,
+    pair: displayPair,
+    symbol: baseSymbol,
+    quoteSymbol,
+    coin,
+    candles,
+    latestClose,
+    high30d,
+    low30d,
+    change30d,
+    averageClose30d,
+    averageVolume30d,
+    summary,
   };
+}
+
+export async function getAnalysis(rawPair = "BTC/USDT"): Promise<MarketAnalysis> {
+  return analyzeMarket(rawPair);
 }

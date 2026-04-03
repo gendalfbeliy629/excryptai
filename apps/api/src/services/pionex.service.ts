@@ -1,5 +1,6 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { TTLCache } from "../utils/cache";
+import { SlidingWindowRateLimiter } from "../utils/rate-limiter";
 
 export type PionexInterval =
   | "1M"
@@ -11,16 +12,6 @@ export type PionexInterval =
   | "8H"
   | "12H"
   | "1D";
-
-export type PionexCandle = {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  amount: number;
-};
 
 export type PionexTicker = {
   symbol: string;
@@ -39,10 +30,13 @@ export type PionexTicker = {
 
 export type PionexBookTicker = {
   symbol: string;
+  baseSymbol: string;
+  quoteSymbol: string;
   bidPrice: number;
   bidSize: number;
   askPrice: number;
   askSize: number;
+  timestamp: number | null;
 };
 
 export type PionexDepthLevel = {
@@ -56,6 +50,16 @@ export type PionexDepth = {
   updateTime: number | null;
 };
 
+export type PionexCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  amount: number;
+};
+
 export type PionexSpotMarket = {
   symbol: string;
   baseSymbol: string;
@@ -63,14 +67,21 @@ export type PionexSpotMarket = {
 };
 
 const BASE_URL = "https://api.pionex.com/api/v1/market";
+
+/**
+ * Ниже потолка Pionex 10 req/s.
+ * Держим 7 req/s + cooldown на 429.
+ */
+const limiter = new SlidingWindowRateLimiter(7, 1000);
+
 const cache = new TTLCache<unknown>();
 
 function cacheKey(parts: Array<string | number>): string {
   return parts.join(":");
 }
 
-function buildSymbol(baseSymbol: string, quoteSymbol: string): string {
-  return `${baseSymbol.trim().toUpperCase()}_${quoteSymbol.trim().toUpperCase()}`;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -109,19 +120,6 @@ function splitMarketSymbol(symbol: string): PionexSpotMarket | null {
   };
 }
 
-async function getCached<T>(
-  key: string,
-  ttlMs: number,
-  fetcher: () => Promise<T>
-): Promise<T> {
-  const cached = cache.get(key);
-  if (cached) return cached as T;
-
-  const value = await fetcher();
-  cache.set(key, value, ttlMs);
-  return value;
-}
-
 function unwrapArrayPayload(payload: any, possibleKeys: string[]): any[] {
   for (const key of possibleKeys) {
     const value = payload?.data?.[key] ?? payload?.[key] ?? payload?.data;
@@ -133,6 +131,54 @@ function unwrapArrayPayload(payload: any, possibleKeys: string[]): any[] {
   if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload)) return payload;
   return [];
+}
+
+async function requestWithLimiter<T>(
+  endpoint: string,
+  params: Record<string, unknown>,
+  retries = 2
+): Promise<T> {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await limiter.schedule(async () => {
+        const response = await axios.get(`${BASE_URL}${endpoint}`, {
+          params,
+          timeout: 15000,
+        });
+
+        return response.data as T;
+      });
+    } catch (error) {
+      const axiosError = error as AxiosError;
+      const status = axiosError.response?.status;
+
+      if (status === 429 && attempt < retries) {
+        attempt += 1;
+        limiter.setCooldown(65_000);
+        await sleep(65_000);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
+async function getCached<T>(
+  key: string,
+  ttlMs: number,
+  fetcher: () => Promise<T>
+): Promise<T> {
+  const cached = cache.get(key);
+  if (cached) {
+    return cached as T;
+  }
+
+  const value = await fetcher();
+  cache.set(key, value, ttlMs);
+  return value;
 }
 
 function mapTicker(row: any): PionexTicker | null {
@@ -162,6 +208,63 @@ function mapTicker(row: any): PionexTicker | null {
     changePercent24h: open > 0 ? ((close - open) / open) * 100 : null,
     time: normalizeTime(row?.time),
   };
+}
+
+function mapBookTicker(row: any): PionexBookTicker | null {
+  const market = splitMarketSymbol(row?.symbol);
+  if (!market) return null;
+
+  const bidPrice = normalizeNumber(row?.bidPrice ?? row?.bid);
+  const askPrice = normalizeNumber(row?.askPrice ?? row?.ask);
+
+  if (
+    bidPrice === null ||
+    askPrice === null ||
+    bidPrice <= 0 ||
+    askPrice <= 0 ||
+    askPrice < bidPrice
+  ) {
+    return null;
+  }
+
+  return {
+    symbol: market.symbol,
+    baseSymbol: market.baseSymbol,
+    quoteSymbol: market.quoteSymbol,
+    bidPrice,
+    bidSize: normalizeNumber(row?.bidSize ?? row?.bidQty ?? row?.bidQuantity) ?? 0,
+    askPrice,
+    askSize: normalizeNumber(row?.askSize ?? row?.askQty ?? row?.askQuantity) ?? 0,
+    timestamp: normalizeTime(row?.timestamp ?? row?.time),
+  };
+}
+
+function mapDepthSide(side: any[]): PionexDepthLevel[] {
+  return side
+    .map((level) => {
+      if (Array.isArray(level)) {
+        const price = normalizeNumber(level[0]);
+        const size = normalizeNumber(level[1]);
+
+        if (price === null || size === null || price <= 0 || size <= 0) {
+          return null;
+        }
+
+        return { price, size };
+      }
+
+      const price = normalizeNumber(level?.price ?? level?.[0]);
+      const size = normalizeNumber(
+        level?.size ?? level?.quantity ?? level?.qty ?? level?.[1]
+      );
+
+      if (price === null || size === null || price <= 0 || size <= 0) {
+        return null;
+      }
+
+      return { price, size };
+    })
+    .filter((item): item is PionexDepthLevel => item !== null);
 }
 
 function mapCandle(row: any): PionexCandle | null {
@@ -208,56 +311,29 @@ function mapCandle(row: any): PionexCandle | null {
   return { time, open, high, low, close, volume, amount };
 }
 
-function mapDepthSide(side: any[]): PionexDepthLevel[] {
-  return side
-    .map((level) => {
-      if (Array.isArray(level)) {
-        const price = normalizeNumber(level[0]);
-        const size = normalizeNumber(level[1]);
-
-        if (price === null || size === null || price <= 0 || size <= 0) {
-          return null;
-        }
-
-        return { price, size };
-      }
-
-      const price = normalizeNumber(level?.price ?? level?.[0]);
-      const size = normalizeNumber(
-        level?.size ?? level?.quantity ?? level?.qty ?? level?.[1]
-      );
-
-      if (price === null || size === null || price <= 0 || size <= 0) {
-        return null;
-      }
-
-      return { price, size };
-    })
-    .filter((item): item is PionexDepthLevel => item !== null);
-}
-
-function sumNotional(levels: PionexDepthLevel[], limit: number): number {
-  return levels
-    .slice(0, limit)
-    .reduce((acc, level) => acc + level.price * level.size, 0);
-}
-
 export async function getAllPionexSpotTickers(): Promise<PionexTicker[]> {
   const key = cacheKey(["pionex", "tickers", "SPOT", "ALL"]);
 
-  return getCached(key, 15_000, async () => {
-    const response = await axios.get(`${BASE_URL}/tickers`, {
-      params: {
-        type: "SPOT",
-      },
-      timeout: 12_000,
-    });
-
-    const rows = unwrapArrayPayload(response.data, ["tickers"]);
+  return getCached(key, 20_000, async () => {
+    const payload = await requestWithLimiter<any>("/tickers", { type: "SPOT" });
+    const rows = unwrapArrayPayload(payload, ["tickers"]);
 
     return rows
       .map((row) => mapTicker(row))
       .filter((item): item is PionexTicker => item !== null);
+  });
+}
+
+export async function getAllPionexSpotBookTickers(): Promise<PionexBookTicker[]> {
+  const key = cacheKey(["pionex", "bookTickers", "SPOT", "ALL"]);
+
+  return getCached(key, 10_000, async () => {
+    const payload = await requestWithLimiter<any>("/bookTickers", { type: "SPOT" });
+    const rows = unwrapArrayPayload(payload, ["tickers", "bookTickers"]);
+
+    return rows
+      .map((row) => mapBookTicker(row))
+      .filter((item): item is PionexBookTicker => item !== null);
   });
 }
 
@@ -271,45 +347,23 @@ export async function getAllPionexSpotMarkets(): Promise<PionexSpotMarket[]> {
   }));
 }
 
-export async function getPionexTicker(
-  baseSymbol: string,
-  quoteSymbol: string
-): Promise<PionexTicker> {
-  const symbol = buildSymbol(baseSymbol, quoteSymbol);
-  const key = cacheKey(["pionex", "ticker", symbol]);
-
-  return getCached(key, 10_000, async () => {
-    const tickers = await getAllPionexSpotTickers();
-    const ticker = tickers.find((item) => item.symbol === symbol);
-
-    if (!ticker) {
-      throw new Error(`Pionex returned empty ticker for ${symbol}`);
-    }
-
-    return ticker;
-  });
-}
-
 export async function getPionexKlines(
   baseSymbol: string,
   quoteSymbol: string,
-  interval: PionexInterval = "1D",
-  limit = 100
+  interval: PionexInterval,
+  limit: number
 ): Promise<PionexCandle[]> {
-  const symbol = buildSymbol(baseSymbol, quoteSymbol);
+  const symbol = `${baseSymbol}_${quoteSymbol}`;
   const key = cacheKey(["pionex", "klines", symbol, interval, limit]);
 
-  return getCached(key, 30_000, async () => {
-    const response = await axios.get(`${BASE_URL}/klines`, {
-      params: {
-        symbol,
-        interval,
-        limit: Math.max(1, Math.min(limit, 500)),
-      },
-      timeout: 12_000,
+  return getCached(key, 60_000, async () => {
+    const payload = await requestWithLimiter<any>("/klines", {
+      symbol,
+      interval,
+      limit: Math.max(1, Math.min(limit, 500)),
     });
 
-    const rows = unwrapArrayPayload(response.data, ["klines", "items", "data"]);
+    const rows = unwrapArrayPayload(payload, ["klines", "items", "data"]);
 
     return rows
       .map((row) => mapCandle(row))
@@ -318,81 +372,26 @@ export async function getPionexKlines(
   });
 }
 
-export async function getPionexBookTicker(
-  baseSymbol: string,
-  quoteSymbol: string
-): Promise<PionexBookTicker> {
-  const symbol = buildSymbol(baseSymbol, quoteSymbol);
-  const key = cacheKey(["pionex", "bookTicker", symbol]);
-
-  return getCached(key, 5_000, async () => {
-    const response = await axios.get(`${BASE_URL}/bookTickers`, {
-      params: {
-        symbol,
-        type: "SPOT",
-      },
-      timeout: 10_000,
-    });
-
-    const rows = unwrapArrayPayload(response.data, ["tickers", "bookTickers"]);
-    const raw =
-      rows.find((item) => item?.symbol === symbol) ??
-      rows[0] ??
-      response.data?.data?.ticker ??
-      response.data?.data?.bookTicker;
-
-    const bidPrice = normalizeNumber(raw?.bidPrice ?? raw?.bid);
-    const bidSize = normalizeNumber(
-      raw?.bidSize ?? raw?.bidQty ?? raw?.bidQuantity
-    );
-    const askPrice = normalizeNumber(raw?.askPrice ?? raw?.ask);
-    const askSize = normalizeNumber(
-      raw?.askSize ?? raw?.askQty ?? raw?.askQuantity
-    );
-
-    if (
-      bidPrice === null ||
-      askPrice === null ||
-      bidPrice <= 0 ||
-      askPrice <= 0 ||
-      askPrice < bidPrice
-    ) {
-      throw new Error(`Pionex returned invalid book ticker for ${symbol}`);
-    }
-
-    return {
-      symbol,
-      bidPrice,
-      bidSize: bidSize ?? 0,
-      askPrice,
-      askSize: askSize ?? 0,
-    };
-  });
-}
-
 export async function getPionexDepth(
   baseSymbol: string,
   quoteSymbol: string,
   limit = 20
 ): Promise<PionexDepth> {
-  const symbol = buildSymbol(baseSymbol, quoteSymbol);
+  const symbol = `${baseSymbol}_${quoteSymbol}`;
   const key = cacheKey(["pionex", "depth", symbol, limit]);
 
-  return getCached(key, 5_000, async () => {
-    const response = await axios.get(`${BASE_URL}/depth`, {
-      params: {
-        symbol,
-        limit: Math.max(5, Math.min(limit, 200)),
-      },
-      timeout: 10_000,
+  return getCached(key, 15_000, async () => {
+    const payload = await requestWithLimiter<any>("/depth", {
+      symbol,
+      limit: Math.max(5, Math.min(limit, 200)),
     });
 
-    const raw = response.data?.data ?? response.data;
+    const raw = payload?.data ?? payload;
     const bids = mapDepthSide(Array.isArray(raw?.bids) ? raw.bids : []);
     const asks = mapDepthSide(Array.isArray(raw?.asks) ? raw.asks : []);
 
     if (!bids.length || !asks.length) {
-      throw new Error(`Pionex returned invalid depth for ${symbol}`);
+      throw new Error(`Invalid depth for ${symbol}`);
     }
 
     return {
@@ -404,8 +403,16 @@ export async function getPionexDepth(
 }
 
 export function getOrderBookNotional(depth: PionexDepth, levels = 10) {
+  const bidNotional = depth.bids
+    .slice(0, levels)
+    .reduce((acc, level) => acc + level.price * level.size, 0);
+
+  const askNotional = depth.asks
+    .slice(0, levels)
+    .reduce((acc, level) => acc + level.price * level.size, 0);
+
   return {
-    bidNotional: sumNotional(depth.bids, levels),
-    askNotional: sumNotional(depth.asks, levels),
+    bidNotional,
+    askNotional,
   };
 }
