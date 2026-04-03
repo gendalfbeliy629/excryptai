@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AiResponse,
+  Candle,
   DashboardData,
   getAiAnalysis,
+  getDashboardBootstrapStatus,
   getDashboardData,
   getInfoCard,
   getMarketDetail,
   getMarkets,
   InfoResponse,
-  MarketsResponse,
-  MarketDetail
+  MarketDetail,
+  MarketsResponse
 } from "../lib/api";
 import {
   formatCompactUsd,
@@ -31,8 +33,10 @@ type Props = {
 };
 
 type IndicatorKey =
-  | "sma7"
-  | "sma30"
+  | "ema20"
+  | "ema50"
+  | "rsi"
+  | "macd"
   | "range"
   | "supports"
   | "tradePlan"
@@ -41,8 +45,10 @@ type IndicatorKey =
 type SidePanelMode = "summary" | "info" | "analytics";
 
 const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
-  { key: "sma7", label: "SMA 7" },
-  { key: "sma30", label: "SMA 30" },
+  { key: "ema20", label: "EMA 20" },
+  { key: "ema50", label: "EMA 50" },
+  { key: "rsi", label: "RSI 14" },
+  { key: "macd", label: "MACD" },
   { key: "range", label: "High / Low 30d" },
   { key: "supports", label: "Support / Resistance" },
   { key: "tradePlan", label: "Entry / TP / SL" },
@@ -137,6 +143,93 @@ function buildManagementLines(
     : ["Для этой пары отдельный buy-план сейчас отсутствует, отображается только summary из анализа."];
 }
 
+function calculateEMA(values: number[], period: number): Array<number | null> {
+  if (!values.length) return [];
+
+  const result: Array<number | null> = Array.from({ length: values.length }, () => null);
+  if (values.length < period) {
+    return result;
+  }
+
+  const multiplier = 2 / (period + 1);
+  let ema = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+
+  result[period - 1] = ema;
+
+  for (let index = period; index < values.length; index += 1) {
+    ema = values[index] * multiplier + ema * (1 - multiplier);
+    result[index] = ema;
+  }
+
+  return result;
+}
+
+function calculateRSI(values: number[], period = 14): Array<number | null> {
+  const result: Array<number | null> = Array.from({ length: values.length }, () => null);
+  if (values.length <= period) {
+    return result;
+  }
+
+  let gains = 0;
+  let losses = 0;
+
+  for (let index = 1; index <= period; index += 1) {
+    const diff = values[index] - values[index - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+  for (let index = period + 1; index < values.length; index += 1) {
+    const diff = values[index] - values[index - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+    result[index] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+
+  return result;
+}
+
+function calculateMACD(values: number[]) {
+  const ema12 = calculateEMA(values, 12);
+  const ema26 = calculateEMA(values, 26);
+
+  const macdLine: Array<number | null> = values.map((_, index) => {
+    if (ema12[index] === null || ema26[index] === null) return null;
+    return (ema12[index] ?? 0) - (ema26[index] ?? 0);
+  });
+
+  const compactMacd = macdLine.filter((value): value is number => value !== null);
+  const signalCompact = calculateEMA(compactMacd, 9);
+
+  const signalLine: Array<number | null> = Array.from({ length: values.length }, () => null);
+  let compactIndex = 0;
+
+  for (let index = 0; index < macdLine.length; index += 1) {
+    if (macdLine[index] === null) continue;
+    signalLine[index] = signalCompact[compactIndex] ?? null;
+    compactIndex += 1;
+  }
+
+  const histogram = macdLine.map((value, index) => {
+    if (value === null || signalLine[index] === null) return null;
+    return value - (signalLine[index] ?? 0);
+  });
+
+  return {
+    macdLine,
+    signalLine,
+    histogram
+  };
+}
+
 function useSelectedMarket(
   initialDetail: MarketDetail | null,
   initialSelectedSymbol: string
@@ -192,6 +285,28 @@ function useSelectedMarket(
   };
 }
 
+async function waitUntilBuySignalsCacheReady() {
+  const maxAttempts = 60;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = await getDashboardBootstrapStatus();
+
+    if (status.buySignalsCacheReady) {
+      return status;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  }
+
+  throw new Error("Кеш BUY-сигналов не успел прогреться. Повтори обновление через несколько секунд.");
+}
+
+function lineY(value: number, min: number, max: number, top: number, height: number) {
+  if (max === min) return top + height / 2;
+  const ratio = (value - min) / (max - min);
+  return top + height - ratio * height;
+}
+
 function TradingChart({
   detail,
   activeIndicators
@@ -199,245 +314,440 @@ function TradingChart({
   detail: MarketDetail | null;
   activeIndicators: Record<IndicatorKey, boolean>;
 }) {
-  const width = 920;
-  const height = 460;
-  const padding = { top: 24, right: 56, bottom: 30, left: 18 };
+  const width = 980;
+  const priceHeight = 380;
+  const indicatorHeight = 110;
+  const macdHeight = 120;
+  const gap = 18;
+  const left = 16;
+  const right = 62;
+  const top = 18;
 
-  const candles = detail?.market.technicals.candles ?? [];
-  const visibleCandles = candles.slice(-40);
+  const candles = (detail?.market.technicals.candles ?? []).slice(-80);
+  const closes = candles.map((item) => item.close);
 
-  const low30d = detail?.signal.low30d ?? null;
-  const high30d = detail?.signal.high30d ?? null;
-  const entryZoneLow = detail?.signal.entryZoneLow ?? null;
-  const entryZoneHigh = detail?.signal.entryZoneHigh ?? null;
-  const protectiveStop = detail?.signal.protectiveStop ?? null;
-  const breakEvenActivationPrice = detail?.signal.breakEvenActivationPrice ?? null;
-  const nearestSupport = detail?.signal.nearestSupport ?? null;
-  const nearestResistance = detail?.signal.nearestResistance ?? null;
-  const confirmationLevel = detail?.signal.confirmationLevel ?? null;
-  const sma30 = detail?.signal.sma30 ?? null;
+  const ema20 = calculateEMA(closes, 20);
+  const ema50 = calculateEMA(closes, 50);
+  const rsi14 = calculateRSI(closes, 14);
+  const macd = calculateMACD(closes);
 
-  const yValues = visibleCandles.flatMap((candle) => [candle.high, candle.low]);
+  const showRsi = activeIndicators.rsi;
+  const showMacd = activeIndicators.macd;
+
+  const totalHeight =
+    top +
+    priceHeight +
+    (showRsi ? gap + indicatorHeight : 0) +
+    (showMacd ? gap + macdHeight : 0) +
+    16;
+
+  const innerWidth = width - left - right;
+  const candleStep = candles.length > 0 ? innerWidth / candles.length : innerWidth;
+  const candleBodyWidth = Math.max(4, candleStep * 0.52);
+
   const extraLevels = [
-    detail?.signal.sma7,
-    sma30,
-    high30d,
-    low30d,
-    nearestResistance,
-    detail?.signal.nextResistance,
-    nearestSupport,
-    entryZoneLow,
-    entryZoneHigh,
-    protectiveStop,
-    breakEvenActivationPrice,
-    confirmationLevel
-  ].filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+    activeIndicators.range ? detail?.signal.low30d : null,
+    activeIndicators.range ? detail?.signal.high30d : null,
+    activeIndicators.supports ? detail?.signal.nearestSupport : null,
+    activeIndicators.supports ? detail?.signal.nearestResistance : null,
+    activeIndicators.tradePlan ? detail?.signal.entryZoneLow : null,
+    activeIndicators.tradePlan ? detail?.signal.entryZoneHigh : null,
+    activeIndicators.tradePlan ? detail?.signal.protectiveStop : null,
+    activeIndicators.tradePlan ? detail?.signal.breakEvenActivationPrice : null,
+    activeIndicators.confirmation ? detail?.signal.confirmationLevel : null
+  ].filter((value): value is number => value !== null && Number.isFinite(value));
 
-  const allY = [...yValues, ...extraLevels];
-  const minPrice = allY.length ? Math.min(...allY) * 0.985 : 0;
-  const maxPrice = allY.length ? Math.max(...allY) * 1.015 : 1;
-  const innerWidth = width - padding.left - padding.right;
-  const innerHeight = height - padding.top - padding.bottom;
-  const candleStep = visibleCandles.length ? innerWidth / visibleCandles.length : innerWidth;
-  const candleBodyWidth = Math.max(5, candleStep * 0.56);
+  const priceValues = candles.flatMap((item) => [item.high, item.low, item.close]);
+  const allPriceValues = [...priceValues, ...extraLevels];
+  const minPrice = allPriceValues.length ? Math.min(...allPriceValues) * 0.985 : 0;
+  const maxPrice = allPriceValues.length ? Math.max(...allPriceValues) * 1.015 : 1;
 
-  function y(price: number) {
-    if (maxPrice === minPrice) return padding.top + innerHeight / 2;
-    const ratio = (price - minPrice) / (maxPrice - minPrice);
-    return padding.top + innerHeight - ratio * innerHeight;
-  }
+  const rsiTop = top + priceHeight + gap;
+  const macdTop = top + priceHeight + (showRsi ? gap + indicatorHeight : 0) + gap;
 
   function x(index: number) {
-    return padding.left + candleStep * index + candleStep / 2;
+    return left + candleStep * index + candleStep / 2;
   }
 
-  const closePolyline = visibleCandles
-    .map((candle, index) => `${x(index)},${y(candle.close)}`)
+  const closePolyline = candles
+    .map((item, index) => `${x(index)},${lineY(item.close, minPrice, maxPrice, top, priceHeight)}`)
     .join(" ");
 
-  const priceTicks = Array.from({ length: 5 }, (_, index) => {
+  const ema20Polyline = candles
+    .map((item, index) => {
+      const value = ema20[index];
+      if (value === null) return null;
+      return `${x(index)},${lineY(value, minPrice, maxPrice, top, priceHeight)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  const ema50Polyline = candles
+    .map((item, index) => {
+      const value = ema50[index];
+      if (value === null) return null;
+      return `${x(index)},${lineY(value, minPrice, maxPrice, top, priceHeight)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  const rsiPolyline = candles
+    .map((item, index) => {
+      const value = rsi14[index];
+      if (value === null) return null;
+      return `${x(index)},${lineY(value, 0, 100, rsiTop, indicatorHeight)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  const validMacdValues = [
+    ...macd.macdLine.filter((v): v is number => v !== null),
+    ...macd.signalLine.filter((v): v is number => v !== null),
+    ...macd.histogram.filter((v): v is number => v !== null),
+    0
+  ];
+
+  const minMacd = validMacdValues.length ? Math.min(...validMacdValues) * 1.15 : -1;
+  const maxMacd = validMacdValues.length ? Math.max(...validMacdValues) * 1.15 : 1;
+
+  const macdPolyline = candles
+    .map((item, index) => {
+      const value = macd.macdLine[index];
+      if (value === null) return null;
+      return `${x(index)},${lineY(value, minMacd, maxMacd, macdTop, macdHeight)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  const macdSignalPolyline = candles
+    .map((item, index) => {
+      const value = macd.signalLine[index];
+      if (value === null) return null;
+      return `${x(index)},${lineY(value, minMacd, maxMacd, macdTop, macdHeight)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  const latestRsi = rsi14[rsi14.length - 1] ?? detail?.market.technicals.rsi14 ?? null;
+  const latestEma20 = ema20[ema20.length - 1] ?? null;
+  const latestEma50 = ema50[ema50.length - 1] ?? null;
+  const latestMacd = macd.macdLine[macd.macdLine.length - 1] ?? null;
+  const latestMacdSignal = macd.signalLine[macd.signalLine.length - 1] ?? null;
+
+  const priceTickValues = Array.from({ length: 5 }, (_, index) => {
     const value = minPrice + ((maxPrice - minPrice) / 4) * index;
     return {
       value,
-      py: y(value)
+      y: lineY(value, minPrice, maxPrice, top, priceHeight)
     };
   });
 
-  const title = detail?.market.pair.display ?? "BTC/USDT";
+  const dateLabels = candles.filter((_, index) => index % Math.max(1, Math.floor(candles.length / 6)) === 0);
+
+  function renderLevel(
+    value: number | null,
+    color: string,
+    dash = "6 6",
+    label?: string
+  ) {
+    if (value === null || !Number.isFinite(value)) return null;
+    const y = lineY(value, minPrice, maxPrice, top, priceHeight);
+
+    return (
+      <g key={`${label ?? color}-${value}`}>
+        <line x1={left} y1={y} x2={width - right + 8} y2={y} stroke={color} strokeDasharray={dash} strokeWidth="1" />
+        {label ? (
+          <text x={width - right + 12} y={y + 4} fill={color} fontSize="11">
+            {label}
+          </text>
+        ) : null}
+      </g>
+    );
+  }
 
   return (
     <div className="chart-shell">
-      <div className="chart-header-row">
+      <div className="chart-header">
         <div>
-          <div className="chart-pair">{title}</div>
-          <div className="chart-subtitle">Свечной график + визуализация сигналов стратегии</div>
+          <div className="chart-title">{detail?.market.pair.display ?? "BTC/USDT"}</div>
+          <div className="chart-subtitle">
+            Светлый TradingView-подобный график без внешней библиотеки, чтобы сборка не падала.
+          </div>
         </div>
+
         <div className="chart-price-box">
-          <span>Цена</span>
+          <span>Текущая цена</span>
           <strong>{formatPrice(detail?.market.spot.priceUsd ?? null)}</strong>
         </div>
       </div>
 
-      <div className="chart-stage">
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`График ${title}`}>
-          <rect x="0" y="0" width={width} height={height} rx="20" className="chart-bg" />
+      <div className="chart-metrics">
+        <div className="tv-metric">
+          <span>EMA 20</span>
+          <strong>{formatPrice(latestEma20)}</strong>
+        </div>
+        <div className="tv-metric">
+          <span>EMA 50</span>
+          <strong>{formatPrice(latestEma50)}</strong>
+        </div>
+        <div className="tv-metric">
+          <span>RSI 14</span>
+          <strong>{formatNumber(latestRsi)}</strong>
+        </div>
+        <div className="tv-metric">
+          <span>MACD</span>
+          <strong>{formatNumber(latestMacd, 4)}</strong>
+        </div>
+        <div className="tv-metric">
+          <span>Signal</span>
+          <strong>{formatNumber(latestMacdSignal, 4)}</strong>
+        </div>
+      </div>
 
-          {priceTicks.map((tick) => (
-            <g key={tick.value}>
-              <line
-                x1={padding.left}
-                x2={width - padding.right}
-                y1={tick.py}
-                y2={tick.py}
-                className="chart-grid-line"
-              />
-              <text x={width - padding.right + 8} y={tick.py + 4} className="chart-axis-label">
-                {formatPrice(tick.value)}
-              </text>
-            </g>
-          ))}
+      {candles.length ? (
+        <div className="chart-svg-wrap">
+          <svg viewBox={`0 0 ${width} ${totalHeight}`} className="chart-svg" role="img" aria-label="market chart">
+            <rect x="0" y="0" width={width} height={totalHeight} rx="18" fill="#ffffff" />
 
-          {activeIndicators.range && low30d !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(low30d)}
-              y2={y(low30d)}
-              className="chart-line chart-line-range"
-            />
-          ) : null}
-
-          {activeIndicators.range && high30d !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(high30d)}
-              y2={y(high30d)}
-              className="chart-line chart-line-range"
-            />
-          ) : null}
-
-          {activeIndicators.tradePlan &&
-          entryZoneLow !== null &&
-          entryZoneHigh !== null ? (
-            <rect
-              x={padding.left}
-              y={y(entryZoneHigh)}
-              width={innerWidth}
-              height={Math.max(6, y(entryZoneLow) - y(entryZoneHigh))}
-              className="chart-zone chart-zone-entry"
-            />
-          ) : null}
-
-          {activeIndicators.tradePlan && protectiveStop !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(protectiveStop)}
-              y2={y(protectiveStop)}
-              className="chart-line chart-line-stop"
-            />
-          ) : null}
-
-          {activeIndicators.tradePlan && breakEvenActivationPrice !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(breakEvenActivationPrice)}
-              y2={y(breakEvenActivationPrice)}
-              className="chart-line chart-line-target"
-            />
-          ) : null}
-
-          {activeIndicators.supports && nearestSupport !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(nearestSupport)}
-              y2={y(nearestSupport)}
-              className="chart-line chart-line-support"
-            />
-          ) : null}
-
-          {activeIndicators.supports && nearestResistance !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(nearestResistance)}
-              y2={y(nearestResistance)}
-              className="chart-line chart-line-resistance"
-            />
-          ) : null}
-
-          {activeIndicators.confirmation && confirmationLevel !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(confirmationLevel)}
-              y2={y(confirmationLevel)}
-              className="chart-line chart-line-confirmation"
-            />
-          ) : null}
-
-          {visibleCandles.map((candle, index) => {
-            const cx = x(index);
-            const openY = y(candle.open);
-            const closeY = y(candle.close);
-            const highY = y(candle.high);
-            const lowY = y(candle.low);
-            const bullish = candle.close >= candle.open;
-
-            return (
-              <g key={`${candle.time}-${index}`}>
+            {priceTickValues.map((tick, index) => (
+              <g key={`price-tick-${index}`}>
                 <line
-                  x1={cx}
-                  x2={cx}
-                  y1={highY}
-                  y2={lowY}
-                  className={bullish ? "chart-wick-up" : "chart-wick-down"}
+                  x1={left}
+                  y1={tick.y}
+                  x2={width - right + 8}
+                  y2={tick.y}
+                  stroke="#e8eef8"
+                  strokeWidth="1"
                 />
-                <rect
-                  x={cx - candleBodyWidth / 2}
-                  y={Math.min(openY, closeY)}
-                  width={candleBodyWidth}
-                  height={Math.max(2, Math.abs(closeY - openY))}
-                  rx="3"
-                  className={bullish ? "chart-candle-up" : "chart-candle-down"}
-                />
+                <text
+                  x={width - right + 12}
+                  y={tick.y + 4}
+                  fill="#64748b"
+                  fontSize="11"
+                >
+                  {formatPrice(tick.value)}
+                </text>
               </g>
-            );
-          })}
+            ))}
 
-          {activeIndicators.sma7 && visibleCandles.length ? (
-            <polyline points={closePolyline} className="chart-path chart-path-sma7" />
-          ) : null}
+            {dateLabels.map((item, index) => {
+              const originalIndex = candles.findIndex((candidate) => candidate.time === item.time);
+              const labelX = x(originalIndex);
+              return (
+                <text
+                  key={`date-${item.time}-${index}`}
+                  x={labelX - 18}
+                  y={top + priceHeight + 18}
+                  fill="#94a3b8"
+                  fontSize="11"
+                >
+                  {new Date(item.time * 1000).toLocaleDateString("ru-RU", {
+                    day: "2-digit",
+                    month: "2-digit"
+                  })}
+                </text>
+              );
+            })}
 
-          {activeIndicators.sma30 && sma30 !== null ? (
-            <line
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y(sma30)}
-              y2={y(sma30)}
-              className="chart-line chart-line-sma30"
-            />
-          ) : null}
-        </svg>
-      </div>
+            {activeIndicators.range
+              ? [
+                  renderLevel(detail?.signal.low30d ?? null, "#94a3b8", "4 6", "Low"),
+                  renderLevel(detail?.signal.high30d ?? null, "#64748b", "4 6", "High")
+                ]
+              : null}
 
-      <div className="chart-legend">
-        <span>
-          <i className="legend-dot legend-buy" /> Бычьи свечи
-        </span>
-        <span>
-          <i className="legend-dot legend-sell" /> Медвежьи свечи
-        </span>
-        <span>
-          <i className="legend-dot legend-zone" /> Entry zone
-        </span>
-        <span>
-          <i className="legend-dot legend-resistance" /> Resistance / confirmation
-        </span>
-      </div>
+            {activeIndicators.supports
+              ? [
+                  renderLevel(detail?.signal.nearestSupport ?? null, "#0f766e", "6 6", "Support"),
+                  renderLevel(detail?.signal.nearestResistance ?? null, "#ea580c", "6 6", "Resistance")
+                ]
+              : null}
+
+            {activeIndicators.tradePlan
+              ? [
+                  renderLevel(detail?.signal.entryZoneLow ?? null, "#38bdf8", "5 5", "Entry low"),
+                  renderLevel(detail?.signal.entryZoneHigh ?? null, "#38bdf8", "5 5", "Entry high"),
+                  renderLevel(detail?.signal.protectiveStop ?? null, "#dc2626", "2 5", "Stop"),
+                  renderLevel(detail?.signal.breakEvenActivationPrice ?? null, "#16a34a", "2 5", "BE")
+                ]
+              : null}
+
+            {activeIndicators.confirmation
+              ? renderLevel(detail?.signal.confirmationLevel ?? null, "#f59e0b", "6 6", "Confirm")
+              : null}
+
+            {closePolyline ? (
+              <polyline
+                fill="none"
+                stroke="#cbd5e1"
+                strokeWidth="1.5"
+                points={closePolyline}
+              />
+            ) : null}
+
+            {activeIndicators.ema20 && ema20Polyline ? (
+              <polyline
+                fill="none"
+                stroke="#2563eb"
+                strokeWidth="2"
+                points={ema20Polyline}
+              />
+            ) : null}
+
+            {activeIndicators.ema50 && ema50Polyline ? (
+              <polyline
+                fill="none"
+                stroke="#7c3aed"
+                strokeWidth="2"
+                points={ema50Polyline}
+              />
+            ) : null}
+
+            {candles.map((candle, index) => {
+              const xCenter = x(index);
+              const yOpen = lineY(candle.open, minPrice, maxPrice, top, priceHeight);
+              const yClose = lineY(candle.close, minPrice, maxPrice, top, priceHeight);
+              const yHigh = lineY(candle.high, minPrice, maxPrice, top, priceHeight);
+              const yLow = lineY(candle.low, minPrice, maxPrice, top, priceHeight);
+              const bullish = candle.close >= candle.open;
+              const color = bullish ? "#16a34a" : "#dc2626";
+              const rectY = Math.min(yOpen, yClose);
+              const rectH = Math.max(2, Math.abs(yClose - yOpen));
+
+              return (
+                <g key={`${candle.time}-${index}`}>
+                  <line
+                    x1={xCenter}
+                    y1={yHigh}
+                    x2={xCenter}
+                    y2={yLow}
+                    stroke={color}
+                    strokeWidth="1.2"
+                  />
+                  <rect
+                    x={xCenter - candleBodyWidth / 2}
+                    y={rectY}
+                    width={candleBodyWidth}
+                    height={rectH}
+                    rx="2"
+                    fill={color}
+                    opacity="0.9"
+                  />
+                </g>
+              );
+            })}
+
+            {showRsi ? (
+              <>
+                <rect
+                  x={left}
+                  y={rsiTop}
+                  width={innerWidth}
+                  height={indicatorHeight}
+                  rx="12"
+                  fill="#f8fafc"
+                  stroke="#e2e8f0"
+                />
+                <line
+                  x1={left}
+                  y1={lineY(70, 0, 100, rsiTop, indicatorHeight)}
+                  x2={left + innerWidth}
+                  y2={lineY(70, 0, 100, rsiTop, indicatorHeight)}
+                  stroke="#ef4444"
+                  strokeDasharray="5 5"
+                />
+                <line
+                  x1={left}
+                  y1={lineY(30, 0, 100, rsiTop, indicatorHeight)}
+                  x2={left + innerWidth}
+                  y2={lineY(30, 0, 100, rsiTop, indicatorHeight)}
+                  stroke="#10b981"
+                  strokeDasharray="5 5"
+                />
+                {rsiPolyline ? (
+                  <polyline
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth="2"
+                    points={rsiPolyline}
+                  />
+                ) : null}
+                <text x={left + 8} y={rsiTop + 16} fill="#64748b" fontSize="12">
+                  RSI 14
+                </text>
+              </>
+            ) : null}
+
+            {showMacd ? (
+              <>
+                <rect
+                  x={left}
+                  y={macdTop}
+                  width={innerWidth}
+                  height={macdHeight}
+                  rx="12"
+                  fill="#f8fafc"
+                  stroke="#e2e8f0"
+                />
+                <line
+                  x1={left}
+                  y1={lineY(0, minMacd, maxMacd, macdTop, macdHeight)}
+                  x2={left + innerWidth}
+                  y2={lineY(0, minMacd, maxMacd, macdTop, macdHeight)}
+                  stroke="#cbd5e1"
+                  strokeDasharray="4 4"
+                />
+                {candles.map((item, index) => {
+                  const value = macd.histogram[index];
+                  if (value === null) return null;
+
+                  const xCenter = x(index);
+                  const zeroY = lineY(0, minMacd, maxMacd, macdTop, macdHeight);
+                  const yValue = lineY(value, minMacd, maxMacd, macdTop, macdHeight);
+                  const barHeight = Math.max(1.5, Math.abs(zeroY - yValue));
+                  const yTop = Math.min(zeroY, yValue);
+
+                  return (
+                    <rect
+                      key={`macd-bar-${item.time}-${index}`}
+                      x={xCenter - Math.max(2, candleBodyWidth / 3)}
+                      y={yTop}
+                      width={Math.max(4, candleBodyWidth / 1.5)}
+                      height={barHeight}
+                      rx="1.5"
+                      fill={value >= 0 ? "#16a34a" : "#dc2626"}
+                      opacity="0.7"
+                    />
+                  );
+                })}
+                {macdPolyline ? (
+                  <polyline
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth="2"
+                    points={macdPolyline}
+                  />
+                ) : null}
+                {macdSignalPolyline ? (
+                  <polyline
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="2"
+                    points={macdSignalPolyline}
+                  />
+                ) : null}
+                <text x={left + 8} y={macdTop + 16} fill="#64748b" fontSize="12">
+                  MACD
+                </text>
+              </>
+            ) : null}
+          </svg>
+        </div>
+      ) : (
+        <div className="chart-empty">
+          Свечи временно недоступны. График будет показан, как только backend вернет candles.
+        </div>
+      )}
     </div>
   );
 }
@@ -461,6 +771,9 @@ export default function DashboardClient({
   const [bootstrapError, setBootstrapError] = useState<string | null>(
     dashboardError ?? marketsError ?? initialDetailError ?? null
   );
+  const [loaderMessage, setLoaderMessage] = useState(
+    "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
+  );
 
   const {
     selectedSymbol,
@@ -477,8 +790,10 @@ export default function DashboardClient({
   const [sideLoading, setSideLoading] = useState(false);
   const [sideError, setSideError] = useState<string | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<Record<IndicatorKey, boolean>>({
-    sma7: true,
-    sma30: true,
+    ema20: true,
+    ema50: true,
+    rsi: true,
+    macd: true,
     range: true,
     supports: true,
     tradePlan: true,
@@ -518,16 +833,21 @@ export default function DashboardClient({
 
       setBootstrapLoading(true);
       setBootstrapError(null);
+      setLoaderMessage("Ждём, пока backend положит BUY-сигналы в кеш.");
 
       try {
+        await waitUntilBuySignalsCacheReady();
+
+        if (cancelled) return;
+
+        setLoaderMessage("Кеш готов. Загружаем dashboard, список рынков и карточку пары.");
+
         const [dashboardResponse, marketsResponse] = await Promise.all([
           getDashboardData(),
           getMarkets(30)
         ]);
 
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         setDashboard(dashboardResponse);
         setMarkets(marketsResponse);
@@ -544,15 +864,11 @@ export default function DashboardClient({
         try {
           const detailResponse = await getMarketDetail(nextSymbol);
 
-          if (cancelled) {
-            return;
-          }
+          if (cancelled) return;
 
           setDetailSeed(detailResponse);
         } catch (error) {
-          if (cancelled) {
-            return;
-          }
+          if (cancelled) return;
 
           setDetailSeed(null);
           setBootstrapError(
@@ -560,9 +876,7 @@ export default function DashboardClient({
           );
         }
       } catch (error) {
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         setBootstrapError(
           error instanceof Error ? error.message : "Не удалось загрузить dashboard"
@@ -632,46 +946,13 @@ export default function DashboardClient({
   return (
     <>
       {bootstrapLoading ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 120,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-            background: "rgba(3, 8, 20, 0.76)",
-            backdropFilter: "blur(10px)"
-          }}
-        >
-          <div
-            style={{
-              width: "min(420px, 100%)",
-              padding: 28,
-              borderRadius: 20,
-              border: "1px solid rgba(73, 130, 255, 0.28)",
-              background:
-                "linear-gradient(180deg, rgba(10, 22, 48, 0.98), rgba(7, 15, 32, 0.98))",
-              boxShadow: "0 20px 48px rgba(0, 0, 0, 0.34)",
-              textAlign: "center"
-            }}
-          >
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                margin: "0 auto 18px",
-                borderRadius: "50%",
-                border: "4px solid rgba(255, 255, 255, 0.12)",
-                borderTopColor: "#4ea1ff",
-                animation: "dashboardSpinner 0.9s linear infinite"
-              }}
-            />
-            <h3 style={{ margin: 0, fontSize: 22 }}>Загружаем рыночные данные</h3>
-            <p style={{ margin: "12px 0 0", color: "#a7b0d1", lineHeight: 1.6 }}>
-              В кеше пока нет готовых данных по криптопарам. Ждём первый прогрев dashboard,
-              список рынков и детальную карточку пары.
+        <div className="loader-overlay">
+          <div className="loader-card">
+            <div className="loader-spinner" />
+            <h3>Прогреваем кеш сигналов</h3>
+            <p>{loaderMessage}</p>
+            <p className="loader-note">
+              Лоадер не скрывается, пока backend не закончит первый scan и не положит BUY-данные в кеш.
             </p>
           </div>
         </div>
@@ -681,8 +962,7 @@ export default function DashboardClient({
         <div className="hero-badge">Dashboard</div>
         <h1 className="page-title">Crypto AI Dashboard</h1>
         <p className="page-subtitle dashboard-subtitle">
-          График пары, сигналы на покупку, полный список рынка и визуализация
-          индикаторов стратегии на одном экране.
+          График пары, сигналы на покупку, полный список рынка и визуализация индикаторов стратегии на одном экране.
         </p>
       </section>
 
@@ -703,7 +983,7 @@ export default function DashboardClient({
           </div>
 
           <div className="card dashboard-indicators-card">
-            <h3>Индикаторы примененные в стратегии</h3>
+            <h3>Индикаторы и уровни на графике</h3>
             <div className="indicator-grid">
               {INDICATORS.map((indicator) => {
                 const enabled = activeIndicators[indicator.key];
@@ -760,7 +1040,7 @@ export default function DashboardClient({
                 ))
               ) : (
                 <div className="empty-state">
-                  <p>Сейчас в кеше нет сигналов на покупку.</p>
+                  <p>Сейчас в кеше нет BUY-сигналов.</p>
                   <p>На графике показывается дефолтная пара BTC/USDT.</p>
                 </div>
               )}
@@ -879,17 +1159,6 @@ export default function DashboardClient({
           </div>
         </div>
       </section>
-
-      <style jsx global>{`
-        @keyframes dashboardSpinner {
-          from {
-            transform: rotate(0deg);
-          }
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
     </>
   );
 }

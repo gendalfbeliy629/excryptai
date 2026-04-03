@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express, { Response } from "express";
 import { env } from "./config/env";
 import { getBot } from "./bot/bot";
 import {
@@ -8,12 +8,13 @@ import {
   parseMarketPair
 } from "./services/market.service";
 import { evaluateMarketSignal } from "./services/signal.service";
-import { getBuyScanResult } from "./services/buy.service";
+import { getBuyScanResult, type BuyScanResult } from "./services/buy.service";
 import { getAssetInfo } from "./services/info.service";
 import { askAI } from "./services/ai.service";
 import { SYMBOL_TO_COINCAP_ID, normalizeSymbol } from "./utils/symbols";
 
 const app = express();
+const BUY_CACHE_TTL_MS = 3 * 60 * 1000;
 
 app.use(express.json());
 
@@ -82,6 +83,76 @@ type MarketListItem = {
   score: number;
 };
 
+type BuyCacheEntry = {
+  value: BuyScanResult;
+  cachedAt: number;
+  expiresAt: number;
+};
+
+let buyScanCache: BuyCacheEntry | null = null;
+let buyScanWarmupPromise: Promise<void> | null = null;
+
+function getCachedBuyScanResult(limit = 5): BuyScanResult | null {
+  if (!buyScanCache) {
+    return null;
+  }
+
+  if (Date.now() > buyScanCache.expiresAt) {
+    buyScanCache = null;
+    return null;
+  }
+
+  return {
+    ...buyScanCache.value,
+    buys: buyScanCache.value.buys.slice(0, limit)
+  };
+}
+
+function setBuyScanCache(result: BuyScanResult) {
+  buyScanCache = {
+    value: result,
+    cachedAt: Date.now(),
+    expiresAt: Date.now() + BUY_CACHE_TTL_MS
+  };
+}
+
+async function warmBuySignalsCache(): Promise<void> {
+  const cached = getCachedBuyScanResult(5);
+  if (cached) {
+    return;
+  }
+
+  if (buyScanWarmupPromise) {
+    return buyScanWarmupPromise;
+  }
+
+  buyScanWarmupPromise = (async () => {
+    try {
+      const result = await getBuyScanResult(10);
+      setBuyScanCache(result);
+    } finally {
+      buyScanWarmupPromise = null;
+    }
+  })();
+
+  return buyScanWarmupPromise;
+}
+
+async function getDashboardBuyScanResult(limit = 5): Promise<BuyScanResult> {
+  const cached = getCachedBuyScanResult(limit);
+  if (cached) {
+    return cached;
+  }
+
+  const result = await getBuyScanResult(Math.max(limit, 10));
+  setBuyScanCache(result);
+
+  return {
+    ...result,
+    buys: result.buys.slice(0, limit)
+  };
+}
+
 async function buildMarketListItem(symbol: string): Promise<MarketListItem | null> {
   try {
     const market = await buildMarketContext(symbol, "USDT");
@@ -130,6 +201,7 @@ app.get("/", (_req, res) => {
     endpoints: [
       "/health",
       "/api/health",
+      "/api/dashboard/bootstrap-status",
       "/api/dashboard",
       "/api/markets",
       "/api/markets/:symbol",
@@ -160,11 +232,32 @@ app.get("/api/symbols", (_req, res) => {
   return ok(res, ALL_SYMBOLS);
 });
 
+app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
+  try {
+    const cached = getCachedBuyScanResult(5);
+
+    if (!cached && !buyScanWarmupPromise) {
+      void warmBuySignalsCache().catch((error) => {
+        console.error("Buy signal warmup failed:", error);
+      });
+    }
+
+    return ok(res, {
+      buySignalsCacheReady: Boolean(cached),
+      buySignalsCacheWarming: Boolean(buyScanWarmupPromise),
+      cacheAgeMs: buyScanCache ? Date.now() - buyScanCache.cachedAt : null,
+      warmedAt: buyScanCache ? new Date(buyScanCache.cachedAt).toISOString() : null
+    });
+  } catch (error) {
+    return fail(res, error);
+  }
+});
+
 app.get("/api/dashboard", async (_req, res) => {
   try {
     const [featuredRaw, buys] = await Promise.all([
       mapWithConcurrency(DASHBOARD_SYMBOLS, 3, buildMarketListItem),
-      getBuyScanResult(5)
+      getDashboardBuyScanResult(5)
     ]);
 
     const featured = featuredRaw.filter(
@@ -324,7 +417,7 @@ app.get("/api/ai/:symbol", async (req, res) => {
   }
 });
 
-app.get("/api/spot/:symbol", async (req: Request, res: Response) => {
+app.get("/api/spot/:symbol", async (req, res) => {
   try {
     const symbol = normalizeSymbol(String(req.params.symbol || ""));
     const spot = await getCoinInfo(symbol);

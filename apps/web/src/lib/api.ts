@@ -1,9 +1,19 @@
-const WEB_API_BASE_URL = "/api/backend";
+const WEB_API_BASE_URL = "/backend";
 
 type ApiEnvelope<T> = {
   success: boolean;
   data: T;
   error?: string;
+};
+
+export type Candle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volumeFrom?: number;
+  volumeTo?: number;
 };
 
 export type MarketListItem = {
@@ -25,21 +35,21 @@ export type BuyCandidate = {
   symbol: string;
   name: string;
   priceUsd: number;
-  buyPriceUsd: number;
-  initialStopLossUsd: number;
-  breakEvenPriceUsd: number;
-  trailingStopAfterTp1Usd: number;
-  trailingStopPercent: number;
-  tp1Usd: number;
-  tp2Usd: number;
-  tp3Usd: number;
-  tp1Percent: number;
-  tp2Percent: number;
-  tp3Percent: number;
-  riskPercent: number;
-  riskRewardTp1: number;
-  riskRewardTp2: number;
-  riskRewardTp3: number;
+  buyPriceUsd?: number;
+  initialStopLossUsd?: number;
+  breakEvenPriceUsd?: number;
+  trailingStopAfterTp1Usd?: number;
+  trailingStopPercent?: number;
+  tp1Usd?: number;
+  tp2Usd?: number;
+  tp3Usd?: number;
+  tp1Percent?: number;
+  tp2Percent?: number;
+  tp3Percent?: number;
+  riskPercent?: number;
+  riskRewardTp1?: number;
+  riskRewardTp2?: number;
+  riskRewardTp3?: number;
   change24h: number | null;
   change30d: number | null;
   trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -66,6 +76,13 @@ export type DashboardData = {
     explanation: string;
   };
   degraded?: boolean;
+};
+
+export type DashboardBootstrapStatus = {
+  buySignalsCacheReady: boolean;
+  buySignalsCacheWarming: boolean;
+  cacheAgeMs: number | null;
+  warmedAt: string | null;
 };
 
 export type MarketsResponse = {
@@ -100,15 +117,7 @@ export type MarketDetail = {
       sma7: number | null;
       sma30: number | null;
       trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
-      candles: {
-        time: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volumeFrom?: number;
-        volumeTo?: number;
-      }[];
+      candles: Candle[];
     };
     liquidity: {
       totalTvlUsd: number | null;
@@ -215,7 +224,7 @@ async function resolveApiBaseUrl(): Promise<string> {
       return `${proto}://${host}${WEB_API_BASE_URL}`;
     }
   } catch {
-    // ignore and fall through to localhost fallback
+    // ignore
   }
 
   return `http://127.0.0.1:${process.env.PORT || "3000"}${WEB_API_BASE_URL}`;
@@ -266,6 +275,10 @@ async function safeFetchApi<T>(path: string): Promise<ApiResult<T>> {
       error: error instanceof Error ? error.message : "Unknown API error"
     };
   }
+}
+
+export async function getDashboardBootstrapStatus(): Promise<DashboardBootstrapStatus> {
+  return fetchApi<DashboardBootstrapStatus>("/dashboard/bootstrap-status");
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
