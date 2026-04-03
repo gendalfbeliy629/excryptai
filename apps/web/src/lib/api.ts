@@ -27,16 +27,21 @@ export type BuyCandidate = {
   rank: number;
   pair: string;
   symbol: string;
+  quoteSymbol: string;
   name: string;
-  priceUsd: number;
-  buyPriceUsd: number;
-  initialStopLossUsd: number;
-  breakEvenPriceUsd: number;
-  trailingStopAfterTp1Usd: number;
+  exchange: "PIONEX";
+  price: number;
+  priceUsd: number | null;
+  entryFrom: number;
+  entryTo: number;
+  initialStopLoss: number;
+  breakEvenActivationPrice: number;
+  breakEvenPrice: number;
   trailingStopPercent: number;
-  tp1Usd: number;
-  tp2Usd: number;
-  tp3Usd: number;
+  trailingStopAfterTp1: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
   tp1Percent: number;
   tp2Percent: number;
   tp3Percent: number;
@@ -44,6 +49,11 @@ export type BuyCandidate = {
   riskRewardTp1: number;
   riskRewardTp2: number;
   riskRewardTp3: number;
+  nearestResistance: number | null;
+  nextResistance: number | null;
+  nearestSupport: number | null;
+  roomToResistancePercent: number | null;
+  atr1hPercent: number | null;
   change24h: number | null;
   change30d: number | null;
   trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -51,6 +61,16 @@ export type BuyCandidate = {
   score: number;
   signal: "BUY";
   reason: string;
+  positives: string[];
+  negatives: string[];
+  entryConfirmationStatus: string;
+  entryConfirmationStrategy: string;
+  entryConfirmationText: string;
+  confirmationLevel: number | null;
+  confirmationRetestLevel: number | null;
+  confirmationBreakoutLevel: number | null;
+  lastClosed1hCandleTime: number | null;
+  lastClosed1hCandleClose: number | null;
   managementPlan: string[];
 };
 
@@ -58,7 +78,12 @@ export type DashboardData = {
   featured: MarketListItem[];
   topBuys: BuyCandidate[];
   summary: {
+    totalSpotMarkets: number;
+    stage1Checked: number;
+    stage2Candidates: number;
     totalChecked: number;
+    analyzedMarkets: number;
+    failedMarkets: number;
     buyCount: number;
     holdCount: number;
     sellCount: number;
@@ -68,6 +93,10 @@ export type DashboardData = {
     avgChange30d: number | null;
     avgRsi14: number | null;
     explanation: string;
+    failedDetails: Array<{
+      pair: string;
+      reason: string;
+    }>;
   };
   degraded?: boolean;
 };
@@ -91,6 +120,7 @@ export type MarketDetail = {
       display: string;
     };
     spot: {
+      price: number;
       priceUsd: number;
       change24h: number | null;
       marketCapUsd: number | null;
@@ -143,7 +173,40 @@ export type MarketDetail = {
     reason: string;
     positives: string[];
     negatives: string[];
+    atr1h: number | null;
+    atr1hPercent: number | null;
+    nearestResistance: number | null;
+    nextResistance: number | null;
+    nearestSupport: number | null;
+    roomToResistancePercent: number | null;
+    entryZoneLow: number | null;
+    entryZoneHigh: number | null;
+    breakEvenActivationPrice: number | null;
+    trailingAtrMultiplier: number;
+    protectiveStop: number | null;
+    invalidationLevel: number | null;
+    target1DistancePercent: number | null;
+    entryConfirmationStatus: string;
+    entryConfirmationStrategy: string;
+    entryConfirmationText: string;
+    confirmationLevel: number | null;
+    confirmationRetestLevel: number | null;
+    confirmationBreakoutLevel: number | null;
+    lastClosed1hCandleTime: number | null;
+    lastClosed1hCandleClose: number | null;
   };
+};
+
+export type InfoResponse = {
+  symbol: string;
+  pair: string;
+  text: string;
+};
+
+export type AiResponse = {
+  symbol: string;
+  pair: string;
+  text: string;
 };
 
 export type ApiResult<T> = {
@@ -207,10 +270,22 @@ export async function getMarketDetail(symbol: string): Promise<MarketDetail> {
   return fetchApi<MarketDetail>(`/markets/${encodeURIComponent(symbol)}`);
 }
 
+export async function getInfoCard(symbol: string): Promise<InfoResponse> {
+  return fetchApi<InfoResponse>(`/info/${encodeURIComponent(symbol)}`);
+}
+
+export async function getAiAnalysis(symbol: string): Promise<AiResponse> {
+  return fetchApi<AiResponse>(`/ai/${encodeURIComponent(symbol)}`);
+}
+
 export async function safeGetDashboardData(): Promise<ApiResult<DashboardData>> {
   return safeFetchApi<DashboardData>("/dashboard");
 }
 
 export async function safeGetMarkets(limit = 12): Promise<ApiResult<MarketsResponse>> {
   return safeFetchApi<MarketsResponse>(`/markets?limit=${limit}`);
+}
+
+export async function safeGetMarketDetail(symbol: string): Promise<ApiResult<MarketDetail>> {
+  return safeFetchApi<MarketDetail>(`/markets/${encodeURIComponent(symbol)}`);
 }

@@ -9,6 +9,8 @@ import {
 } from "./services/market.service";
 import { evaluateMarketSignal } from "./services/signal.service";
 import { getBuyScanResult } from "./services/buy.service";
+import { getAssetInfo } from "./services/info.service";
+import { askAI } from "./services/ai.service";
 import { SYMBOL_TO_COINCAP_ID, normalizeSymbol } from "./utils/symbols";
 
 const app = express();
@@ -243,6 +245,42 @@ app.get("/api/markets/:symbol", async (req, res) => {
           breakEvenActivationPrice: null,
           trailingAtrMultiplier: 1.25
         }
+    });
+  } catch (error) {
+    return fail(res, error, 400);
+  }
+});
+
+
+app.get("/api/info/:symbol", async (req, res) => {
+  try {
+    const rawSymbol = String(req.params.symbol || "BTC");
+    const { displayPair } = parseMarketPair(rawSymbol);
+    const text = await getAssetInfo(displayPair);
+
+    return ok(res, {
+      symbol: normalizeSymbol(rawSymbol),
+      pair: displayPair,
+      text
+    });
+  } catch (error) {
+    return fail(res, error, 400);
+  }
+});
+
+app.get("/api/ai/:symbol", async (req, res) => {
+  try {
+    const rawSymbol = String(req.params.symbol || "BTC");
+    const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawSymbol);
+    const market = await buildMarketContext(baseSymbol, quoteSymbol);
+    const question =
+      String(req.query.question || "Дай аналитику текущей пары за 30 дней и кратко объясни как выглядит setup сейчас.");
+    const text = await askAI(question, market);
+
+    return ok(res, {
+      symbol: normalizeSymbol(baseSymbol),
+      pair: displayPair,
+      text
     });
   } catch (error) {
     return fail(res, error, 400);
