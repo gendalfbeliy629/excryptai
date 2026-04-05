@@ -1,0 +1,30 @@
+# Глобальный контроль
+* _tech-leads
+
+# GitHub process
+/.github/ _tech-leads _system-analysts
+/CONTRIBUTING.md _system-analysts _tech-writers
+/README.md _tech-leads _system-analysts
+
+# Docs
+/docs/ _system-analysts _tech-writers
+/docs/architecture/ _tech-leads _system-analysts
+/docs/api/ _backend _system-analysts
+/docs/business-rules/ _system-analysts
+/docs/processes/ _system-analysts _project-managers
+/docs/adr/ _tech-leads _system-analysts
+
+# Backend
+/apps/api/ _backend _system-analysts
+
+# Frontend
+/apps/web/ _frontend _qa
+
+# Shared packages
+/packages/ _backend _frontend
+
+# Config / infra
+*.json _tech-leads
+*.yml _devops
+*.yaml _devops
+Dockerfile _devops _tech-leads
