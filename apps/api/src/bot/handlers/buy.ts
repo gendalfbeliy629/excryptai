@@ -2,6 +2,7 @@ import { Telegraf } from "telegraf";
 import {
   BuyCandidate,
   FailedMarketDetail,
+  RejectionBreakdownItem,
   getBuyScanResult,
 } from "../../services/buy.service";
 
@@ -96,6 +97,27 @@ function buildFailedMarketsSection(failedDetails: FailedMarketDetail[]): string 
   ]);
 }
 
+function buildBreakdownSection(
+  title: string,
+  breakdown: RejectionBreakdownItem[],
+  maxItems = 10
+): string {
+  if (!breakdown.length) {
+    return "";
+  }
+
+  const lines = breakdown.slice(0, maxItems).map((item) => {
+    const samples = item.samplePairs.length ? ` | примеры: ${item.samplePairs.join(", ")}` : "";
+    return `- ${item.label}: ${item.count}${samples}`;
+  });
+
+  if (breakdown.length > maxItems) {
+    lines.push(`- ... еще ${breakdown.length - maxItems} категорий`);
+  }
+
+  return joinMessageSections([title, lines.join("\n")]);
+}
+
 function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>): string {
   const summaryLines = [
     `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
@@ -155,12 +177,28 @@ export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
       await ctx.reply(
-        "Сканирую Pionex staged scan: stage 1 = все tickers/bookTickers, stage 2 = полный анализ только лучших кандидатов через rate limiter, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
+        "Сканирую Pionex staged scan: stage 1 = быстрый отсев по ticker/bookTicker, stage 2 = полный анализ лучших кандидатов, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
       );
 
       const result = await getBuyScanResult(10);
 
       const summaryBlock = buildSummaryBlock(result);
+
+      const stage1BreakdownSection = buildBreakdownSection(
+        "Breakdown Stage 1 — причины отсева на быстром фильтре:",
+        result.summary.stage1RejectionBreakdown
+      );
+
+      const stage2BreakdownSection = buildBreakdownSection(
+        "Breakdown Stage 2 — причины отказа на полном анализе:",
+        result.summary.stage2RejectionBreakdown
+      );
+
+      const stage3BreakdownSection = buildBreakdownSection(
+        "Breakdown Stage 3 — причины отказа на confirm-layer:",
+        result.summary.stage3RejectionBreakdown
+      );
+
       const failedSection = buildFailedMarketsSection(result.summary.failedDetails);
 
       if (!result.buys.length) {
@@ -170,6 +208,9 @@ export function registerBuyHandler(bot: Telegraf) {
             "Что происходит на рынке:",
             summaryBlock,
           ]),
+          stage1BreakdownSection,
+          stage2BreakdownSection,
+          stage3BreakdownSection,
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
           failedSection,
         ]);
@@ -186,6 +227,9 @@ export function registerBuyHandler(bot: Telegraf) {
           "Сводка staged scan:",
           summaryBlock,
         ]),
+        stage1BreakdownSection,
+        stage2BreakdownSection,
+        stage3BreakdownSection,
         failedSection,
         buyCards,
       ]);
