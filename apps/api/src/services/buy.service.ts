@@ -8,7 +8,7 @@ import {
   PionexSpotMarket,
   PionexTicker,
 } from "./pionex.service";
-import { evaluateMarketSignal } from "./signal.service";
+import { BuyScanMode, evaluateMarketSignal } from "./signal.service";
 
 export type BuyCandidate = {
   rank: number;
@@ -109,11 +109,31 @@ export type BuyMarketSummary = {
   stage1RejectionBreakdown: RejectionBreakdownItem[];
   stage2RejectionBreakdown: RejectionBreakdownItem[];
   stage3RejectionBreakdown: RejectionBreakdownItem[];
+  scanMode: BuyScanMode;
 };
 
 export type BuyScanResult = {
   buys: BuyCandidate[];
   summary: BuyMarketSummary;
+};
+
+type Stage1Config = {
+  mode: BuyScanMode;
+  topSlicePercent: number;
+  minCandidates: number;
+  maxCandidates: number;
+  idealChangeMin: number;
+  idealChangeMax: number;
+  extendedChangeMax: number;
+  lowLiquidityAmount: number;
+  mediumLiquidityAmount: number;
+  highLiquidityAmount: number;
+  spreadTight: number;
+  spreadAcceptable: number;
+  weakChangeReject: number;
+  overheatedChangeReject: number;
+  extremeIntradayRangeReject: number;
+  lowScoreReject: number;
 };
 
 type Stage1Candidate = {
@@ -135,6 +155,48 @@ type Stage1ScreenedMarket = {
   primaryRejectCode: string | null;
   primaryRejectLabel: string | null;
 };
+
+function getStage1Config(mode: BuyScanMode): Stage1Config {
+  if (mode === "soft") {
+    return {
+      mode,
+      topSlicePercent: 0.28,
+      minCandidates: 48,
+      maxCandidates: 140,
+      idealChangeMin: -4,
+      idealChangeMax: 10,
+      extendedChangeMax: 18,
+      lowLiquidityAmount: 180_000,
+      mediumLiquidityAmount: 800_000,
+      highLiquidityAmount: 4_000_000,
+      spreadTight: 0.16,
+      spreadAcceptable: 0.28,
+      weakChangeReject: -4,
+      overheatedChangeReject: 18,
+      extremeIntradayRangeReject: 18,
+      lowScoreReject: 8,
+    };
+  }
+
+  return {
+    mode,
+    topSlicePercent: 0.22,
+    minCandidates: 40,
+    maxCandidates: 120,
+    idealChangeMin: -3,
+    idealChangeMax: 8,
+    extendedChangeMax: 15,
+    lowLiquidityAmount: 250_000,
+    mediumLiquidityAmount: 1_000_000,
+    highLiquidityAmount: 5_000_000,
+    spreadTight: 0.12,
+    spreadAcceptable: 0.22,
+    weakChangeReject: -3,
+    overheatedChangeReject: 15,
+    extremeIntradayRangeReject: 15,
+    lowScoreReject: 12,
+  };
+}
 
 async function mapWithConcurrency<TInput, TOutput>(
   items: TInput[],
@@ -227,7 +289,8 @@ function getStage1PrimaryReject(
   spreadPercent: number | null,
   intradayRangePercent: number | null,
   stage1Score: number,
-  selectedForStage2: boolean
+  selectedForStage2: boolean,
+  config: Stage1Config
 ): { code: string; label: string } | null {
   if (!ticker) {
     return {
@@ -242,63 +305,65 @@ function getStage1PrimaryReject(
 
   const change24h = ticker.changePercent24h;
 
-  if (ticker.amount < 250_000) {
+  if (ticker.amount < config.lowLiquidityAmount) {
     return {
       code: "STAGE1_LOW_LIQUIDITY",
-      label: "Слишком низкая ликвидность / объем для Stage 1",
+      label: `Слишком низкая ликвидность / объем для Stage 1 (${config.mode})`,
     };
   }
 
-  if (spreadPercent !== null && spreadPercent > 0.22) {
+  if (spreadPercent !== null && spreadPercent > config.spreadAcceptable) {
     return {
       code: "STAGE1_WIDE_SPREAD",
-      label: "Слишком широкий bid/ask spread для Stage 1",
+      label: `Слишком широкий bid/ask spread для Stage 1 (${config.mode})`,
     };
   }
 
-  if (change24h !== null && change24h < -3) {
+  if (change24h !== null && change24h < config.weakChangeReject) {
     return {
       code: "STAGE1_24H_TOO_WEAK",
-      label: "Слишком слабое 24H движение для первичного отбора",
+      label: `Слишком слабое 24H движение для первичного отбора (${config.mode})`,
     };
   }
 
-  if (change24h !== null && change24h > 15) {
+  if (change24h !== null && change24h > config.overheatedChangeReject) {
     return {
       code: "STAGE1_24H_OVERHEATED",
-      label: "Слишком разогнанное 24H движение для первичного отбора",
+      label: `Слишком разогнанное 24H движение для первичного отбора (${config.mode})`,
     };
   }
 
-  if (intradayRangePercent !== null && intradayRangePercent > 15) {
+  if (intradayRangePercent !== null && intradayRangePercent > config.extremeIntradayRangeReject) {
     return {
       code: "STAGE1_EXTREME_INTRADAY_RANGE",
-      label: "Слишком экстремальный intraday range для Stage 1",
+      label: `Слишком экстремальный intraday range для Stage 1 (${config.mode})`,
     };
   }
 
-  if (stage1Score < 12) {
+  if (stage1Score < config.lowScoreReject) {
     return {
       code: "STAGE1_SCORE_TOO_LOW",
-      label: "Слишком низкий суммарный Stage 1 score",
+      label: `Слишком низкий суммарный Stage 1 score (${config.mode})`,
     };
   }
 
   return {
     code: "STAGE1_RANK_CUTOFF",
-    label: "Не вошел в top-кандидаты после Stage 1 ranking",
+    label: `Не вошел в top-кандидаты после Stage 1 ranking (${config.mode})`,
   };
 }
 
 function buildStage1Screening(
   markets: PionexSpotMarket[],
   tickers: PionexTicker[],
-  bookTickers: PionexBookTicker[]
+  bookTickers: PionexBookTicker[],
+  mode: BuyScanMode
 ): {
   candidates: Stage1Candidate[];
   screenedMarkets: Stage1ScreenedMarket[];
   rejectionBreakdown: RejectionBreakdownItem[];
 } {
+  const config = getStage1Config(mode);
   const tickerMap = new Map<string, PionexTicker>(tickers.map((item) => [item.symbol, item]));
   const bookTickerMap = new Map<string, PionexBookTicker>(
     bookTickers.map((item) => [item.symbol, item])
@@ -334,21 +399,21 @@ function buildStage1Screening(
     const change24h = ticker.changePercent24h;
 
     if (change24h !== null) {
-      if (change24h >= -3 && change24h <= 8) score += 12;
-      else if (change24h > 8 && change24h <= 15) score += 4;
+      if (change24h >= config.idealChangeMin && change24h <= config.idealChangeMax) score += 12;
+      else if (change24h > config.idealChangeMax && change24h <= config.extendedChangeMax) score += 4;
       else score -= 8;
     }
 
     if (ticker.amount > 0) {
-      if (ticker.amount >= 5_000_000) score += 14;
-      else if (ticker.amount >= 1_000_000) score += 10;
-      else if (ticker.amount >= 250_000) score += 6;
+      if (ticker.amount >= config.highLiquidityAmount) score += 14;
+      else if (ticker.amount >= config.mediumLiquidityAmount) score += 10;
+      else if (ticker.amount >= config.lowLiquidityAmount) score += 6;
       else score += 1;
     }
 
     if (spreadPercent !== null) {
-      if (spreadPercent <= 0.12) score += 10;
-      else if (spreadPercent <= 0.22) score += 5;
+      if (spreadPercent <= config.spreadTight) score += 10;
+      else if (spreadPercent <= config.spreadAcceptable) score += 5;
       else score -= 10;
     }
 
@@ -358,7 +423,7 @@ function buildStage1Screening(
     if (intradayRangePercent !== null) {
       if (intradayRangePercent >= 1.2 && intradayRangePercent <= 10) {
         score += 6;
-      } else if (intradayRangePercent > 15) {
+      } else if (intradayRangePercent > config.extremeIntradayRangeReject) {
         score -= 8;
       }
     }
@@ -380,7 +445,10 @@ function buildStage1Screening(
     .filter((item): item is Stage1ScreenedMarket & { ticker: PionexTicker } => item.ticker !== null)
     .sort((a, b) => b.stage1Score - a.stage1Score);
 
-  const dynamicLimit = Math.max(40, Math.min(120, Math.ceil(ranked.length * 0.22)));
+  const dynamicLimit = Math.max(
+    config.minCandidates,
+    Math.min(config.maxCandidates, Math.ceil(ranked.length * config.topSlicePercent))
+  );
   const selectedSymbols = new Set(ranked.slice(0, dynamicLimit).map((item) => item.market.symbol));
 
   for (const item of screened) {
@@ -392,7 +460,8 @@ function buildStage1Screening(
       item.spreadPercent,
       item.intradayRangePercent,
       item.stage1Score,
-      selected
+      selected,
+      config
     );
 
     item.primaryRejectCode = reject?.code ?? null;
@@ -449,21 +518,21 @@ function isStage3ConfirmationRefusal(item: RawEvaluation): boolean {
   const roomFailed =
     item.roomToResistancePercent !== null &&
     item.minimumRoomPercent !== null &&
-    item.roomToResistancePercent < item.minimumRoomPercent;
+    item.roomToResistancePercent < item.minimumRoomPercent &&
+    !(item.scanMode === "soft" && item.roomToResistancePercent >= item.minimumRoomPercent * 0.92);
 
   const stopFailed =
     item.stopDistancePercent !== null &&
-    (item.stopDistancePercent < 1.8 || item.stopDistancePercent > 5.4);
+    (item.stopDistancePercent < item.stopMin || item.stopDistancePercent > item.stopMax);
 
   const riskRewardFailed =
     item.target1DistancePercent !== null &&
     item.stopDistancePercent !== null &&
-    item.target1DistancePercent / Math.max(item.stopDistancePercent, 0.0001) < 1.8;
+    item.target1DistancePercent / Math.max(item.stopDistancePercent, 0.0001) < item.rrMin;
 
   const overheated =
-    (item.change30d ?? 0) > 95 ||
-    (item.rsi14 !== null && item.rsi14 > 68) ||
-    (item.pullbackFromHigh !== null && item.pullbackFromHigh < 4);
+    (item.rsi14 !== null && item.rsi14 > item.hardRejectOneHourRsi) ||
+    (item.pullbackFromHigh !== null && item.pullbackFromHigh < item.hardRejectPullbackFromHigh);
 
   const weakRegime = item.trend30d === "BEARISH" || item.regimeScore <= -20;
   const brokenSetup = item.setupScore <= -18;
@@ -483,77 +552,77 @@ function classifyStage2RejectedEvaluation(item: RawEvaluation): { code: string; 
   if (item.signal === "SELL") {
     return {
       code: "STAGE2_SELL_BEARISH_REGIME",
-      label: "Медвежий режим: full-analysis перевел рынок в SELL",
+      label: `Медвежий режим: full-analysis перевел рынок в SELL (${item.scanMode})`,
     };
   }
 
   if (item.trend30d === "BEARISH" || item.regimeScore <= -20) {
     return {
       code: "STAGE2_DAILY_BEARISH_OR_WEAK",
-      label: "Слабый или медвежий дневной режим на full-analysis",
+      label: `Слабый или медвежий дневной режим на full-analysis (${item.scanMode})`,
     };
   }
 
   if (item.setupScore <= -18) {
     return {
       code: "STAGE2_FOUR_H_OR_ONE_H_STRUCTURE_FAILED",
-      label: "4H/1H структура не прошла full-analysis",
+      label: `4H/1H структура не прошла full-analysis (${item.scanMode})`,
     };
   }
 
   if (
     item.roomToResistancePercent !== null &&
     item.minimumRoomPercent !== null &&
-    item.roomToResistancePercent < item.minimumRoomPercent
+    item.roomToResistancePercent < item.minimumRoomPercent &&
+    !(item.scanMode === "soft" && item.roomToResistancePercent >= item.minimumRoomPercent * 0.92)
   ) {
     return {
       code: "STAGE2_NOT_ENOUGH_ROOM_TO_RESISTANCE",
-      label: "Недостаточно room до ближайшего сопротивления",
+      label: `Недостаточно room до ближайшего сопротивления (${item.scanMode})`,
     };
   }
 
   if (
     item.stopDistancePercent !== null &&
-    (item.stopDistancePercent < 1.8 || item.stopDistancePercent > 5.4)
+    (item.stopDistancePercent < item.stopMin || item.stopDistancePercent > item.stopMax)
   ) {
     return {
       code: "STAGE2_STOP_DISTANCE_INVALID",
-      label: "Стоп слишком узкий или слишком широкий",
+      label: `Стоп слишком узкий или слишком широкий (${item.scanMode})`,
     };
   }
 
   if (
     item.target1DistancePercent !== null &&
     item.stopDistancePercent !== null &&
-    item.target1DistancePercent / Math.max(item.stopDistancePercent, 0.0001) < 1.8
+    item.target1DistancePercent / Math.max(item.stopDistancePercent, 0.0001) < item.rrMin
   ) {
     return {
       code: "STAGE2_RISK_REWARD_TOO_WEAK",
-      label: "Слабое R/R до первой цели",
+      label: `Слабое R/R до первой цели (${item.scanMode})`,
     };
   }
 
   if (
-    (item.change30d ?? 0) > 95 ||
-    (item.rsi14 !== null && item.rsi14 > 68) ||
-    (item.pullbackFromHigh !== null && item.pullbackFromHigh < 4)
+    (item.rsi14 !== null && item.rsi14 > item.hardRejectOneHourRsi) ||
+    (item.pullbackFromHigh !== null && item.pullbackFromHigh < item.hardRejectPullbackFromHigh)
   ) {
     return {
       code: "STAGE2_OVERHEATED_OR_LATE_ENTRY",
-      label: "Монета перегрета или вход слишком поздний",
+      label: `Монета перегрета или вход слишком поздний (${item.scanMode})`,
     };
   }
 
-  if (item.score < 74) {
+  if (item.score < item.stage2StaticScoreMin) {
     return {
       code: "STAGE2_STATIC_SCORE_TOO_LOW",
-      label: "Static setup не набрал проходной score",
+      label: `Static setup не набрал проходной score (${item.scanMode})`,
     };
   }
 
   return {
     code: "STAGE2_OTHER_STATIC_REJECTION",
-    label: "Прочие причины отказа на full-analysis",
+    label: `Прочие причины отказа на full-analysis (${item.scanMode})`,
   };
 }
 
@@ -565,34 +634,34 @@ function classifyStage3RejectedEvaluation(item: RawEvaluation): { code: string; 
   if (item.entryConfirmationStatus === "WAITING_BREAKOUT_RETEST") {
     return {
       code: "STAGE3_WAITING_BREAKOUT_RETEST",
-      label: "Ждет breakout-retest подтверждение по закрытой 1H свече",
+      label: `Ждет breakout-retest подтверждение по закрытой 1H свече (${item.scanMode})`,
     };
   }
 
   if (item.entryConfirmationStatus === "WAITING_RETEST") {
     return {
       code: "STAGE3_WAITING_RETEST",
-      label: "Ждет retest и закрытие 1H обратно вверх",
+      label: `Ждет retest и закрытие 1H обратно вверх (${item.scanMode})`,
     };
   }
 
   if (item.entryConfirmationStatus === "WAITING_1H_CLOSE") {
     return {
       code: "STAGE3_WAITING_1H_CLOSE",
-      label: "Ждет подтвержденный 1H close выше trigger-level",
+      label: `Ждет подтвержденный 1H close выше trigger-level (${item.scanMode})`,
     };
   }
 
   if (item.entryConfirmationStatus === "NO_DATA") {
     return {
       code: "STAGE3_NO_CONFIRMATION_DATA",
-      label: "Недостаточно закрытых 1H candle-данных для confirm-layer",
+      label: `Недостаточно закрытых 1H candle-данных для confirm-layer (${item.scanMode})`,
     };
   }
 
   return {
     code: "STAGE3_OTHER_CONFIRMATION_REJECTION",
-    label: "Прочие причины отказа на confirm-layer",
+    label: `Прочие причины отказа на confirm-layer (${item.scanMode})`,
   };
 }
 
@@ -793,7 +862,7 @@ function buildNoBuyExplanation(summary: BuyMarketSummary): string {
   const reasons: string[] = [];
 
   if (summary.buyCount > 0) {
-    return "На рынке есть пары, которые прошли staged scan, full validation и confirm-layer по закрытой 1H свече.";
+    return `На рынке есть пары, которые прошли staged scan, full validation и confirm-layer по закрытой 1H свече в режиме ${summary.scanMode}.`;
   }
 
   if (summary.failedMarkets > 0) {
@@ -821,7 +890,7 @@ function buildNoBuyExplanation(summary: BuyMarketSummary): string {
 
   if (!reasons.length) {
     reasons.push(
-      "кандидаты не проходят фильтры по 1D/4H тренду, качеству отката, room-to-resistance, confirm-layer по закрытой 1H свече и адекватному R/R"
+      `кандидаты не проходят фильтры по 1D/4H тренду, качеству отката, room-to-resistance, confirm-layer по закрытой 1H свече и адекватному R/R в режиме ${summary.scanMode}`
     );
   }
 
@@ -832,7 +901,8 @@ function toSummary(
   totalSpotMarkets: number,
   stage2Candidates: number,
   scanResults: ScanItemResult[],
-  stage1RejectionBreakdown: RejectionBreakdownItem[]
+  stage1RejectionBreakdown: RejectionBreakdownItem[],
+  scanMode: BuyScanMode
 ): BuyMarketSummary {
   const analyzedItems = scanResults
     .filter((item): item is Extract<ScanItemResult, { status: "ok" }> => item.status === "ok")
@@ -875,20 +945,21 @@ function toSummary(
     stage1RejectionBreakdown,
     stage2RejectionBreakdown: stage2Breakdown,
     stage3RejectionBreakdown: stage3Breakdown,
+    scanMode,
   };
 
   summary.explanation = buildNoBuyExplanation(summary);
   return summary;
 }
 
-export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
+export async function getBuyScanResult(limit = 10, mode: BuyScanMode = "hard"): Promise<BuyScanResult> {
   const [markets, tickers, bookTickers] = await Promise.all([
     getAllPionexSpotMarkets(),
     getAllPionexSpotTickers(),
     getAllPionexSpotBookTickers(),
   ]);
 
-  const stage1 = buildStage1Screening(markets, tickers, bookTickers);
+  const stage1 = buildStage1Screening(markets, tickers, bookTickers, mode);
   const stage1Candidates = stage1.candidates;
 
   const scanResults = await mapWithConcurrency(
@@ -912,7 +983,7 @@ export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
           }
         );
 
-        const evaluation = evaluateMarketSignal(marketContext);
+        const evaluation = evaluateMarketSignal(marketContext, mode);
 
         if (!evaluation) {
           return {
@@ -944,7 +1015,8 @@ export async function getBuyScanResult(limit = 10): Promise<BuyScanResult> {
     markets.length,
     stage1Candidates.length,
     scanResults,
-    stage1.rejectionBreakdown
+    stage1.rejectionBreakdown,
+    mode
   );
 
   const buys: BuyCandidate[] = scanResults

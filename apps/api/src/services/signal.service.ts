@@ -1,5 +1,6 @@
 import { MarketContext, OHLCItem, TrendType } from "./market.service";
 
+export type BuyScanMode = "hard" | "soft";
 export type DeterministicSignal = "BUY" | "HOLD" | "SELL";
 export type EntryConfirmationStatus =
   | "CONFIRMED"
@@ -24,6 +25,48 @@ type EntryConfirmation = {
   breakoutLevel: number | null;
   lastClosedCandleTime: number | null;
   lastClosedCandleClose: number | null;
+};
+
+type SignalThresholds = {
+  mode: BuyScanMode;
+  stage2StaticScoreMin: number;
+  stage2BuyScoreMin: number;
+  minimumRoomAtrMultiplier: number;
+  minimumRoomRiskMultiplier: number;
+  minimumRoomFloor: number;
+  rrMin: number;
+  stopMin: number;
+  stopMax: number;
+  hardRejectDailyRsi: number;
+  hardRejectOneHourRsi: number;
+  hardRejectFourHourAdx: number;
+  hardRejectPullbackFromHigh: number;
+  hardRejectChange30d: number;
+  hardRejectLateEntryRsi: number;
+  setupIdealDistanceFromEma20: number;
+  setupLateDistanceFromEma20: number;
+  rangeHighPenalty: number;
+  pullbackHealthyMin: number;
+  pullbackHealthyMax: number;
+  pullbackPenaltyHigh: number;
+  confirmVolumeMin: number;
+  confirmStrongCloseThreshold: number;
+  confirmBodyAtrFactor: number;
+  confirmRetestToleranceAtr: number;
+  confirmRetestTolerancePrice: number;
+  confirmBreakoutRetestToleranceAtr: number;
+  confirmBreakoutRetestTolerancePrice: number;
+  confirmTriggerBuffer: number;
+  confirmPreviousCloseBuffer: number;
+  confirmWaitingRetestCloseBuffer: number;
+  confirmWaitingRetestLowBufferMultiplier: number;
+  noDataPenalty: number;
+  waitingBreakoutRetestPenalty: number;
+  waitingRetestPenalty: number;
+  waitingClosePenalty: number;
+  strongCloseReward: number;
+  retestReward: number;
+  breakoutRetestReward: number;
 };
 
 export type SignalEvaluation = {
@@ -79,7 +122,106 @@ export type SignalEvaluation = {
   confirmationBreakoutLevel: number | null;
   lastClosed1hCandleTime: number | null;
   lastClosed1hCandleClose: number | null;
+  scanMode: BuyScanMode;
+  staticSetupPassed: boolean;
+  buyAllowed: boolean;
+  hardReject: boolean;
+  stage2StaticScoreMin: number;
+  stage2BuyScoreMin: number;
+  rrMin: number;
+  stopMin: number;
+  stopMax: number;
+  hardRejectOneHourRsi: number;
+  hardRejectPullbackFromHigh: number;
 };
+
+function getSignalThresholds(mode: BuyScanMode): SignalThresholds {
+  if (mode === "soft") {
+    return {
+      mode,
+      stage2StaticScoreMin: 71,
+      stage2BuyScoreMin: 73,
+      minimumRoomAtrMultiplier: 1.5,
+      minimumRoomRiskMultiplier: 1.6,
+      minimumRoomFloor: 3.6,
+      rrMin: 1.6,
+      stopMin: 1.6,
+      stopMax: 6.2,
+      hardRejectDailyRsi: 70,
+      hardRejectOneHourRsi: 70,
+      hardRejectFourHourAdx: 14,
+      hardRejectPullbackFromHigh: 2,
+      hardRejectChange30d: 120,
+      hardRejectLateEntryRsi: 70,
+      setupIdealDistanceFromEma20: 2.4,
+      setupLateDistanceFromEma20: 4.2,
+      rangeHighPenalty: 80,
+      pullbackHealthyMin: 4,
+      pullbackHealthyMax: 20,
+      pullbackPenaltyHigh: 24,
+      confirmVolumeMin: 0.94,
+      confirmStrongCloseThreshold: 0.55,
+      confirmBodyAtrFactor: 0.17,
+      confirmRetestToleranceAtr: 0.3,
+      confirmRetestTolerancePrice: 0.0024,
+      confirmBreakoutRetestToleranceAtr: 0.34,
+      confirmBreakoutRetestTolerancePrice: 0.0028,
+      confirmTriggerBuffer: 0.996,
+      confirmPreviousCloseBuffer: 0.993,
+      confirmWaitingRetestCloseBuffer: 0.992,
+      confirmWaitingRetestLowBufferMultiplier: 1.1,
+      noDataPenalty: -10,
+      waitingBreakoutRetestPenalty: -6,
+      waitingRetestPenalty: -6,
+      waitingClosePenalty: -8,
+      strongCloseReward: 8,
+      retestReward: 10,
+      breakoutRetestReward: 12,
+    };
+  }
+
+  return {
+    mode,
+    stage2StaticScoreMin: 74,
+    stage2BuyScoreMin: 76,
+    minimumRoomAtrMultiplier: 1.7,
+    minimumRoomRiskMultiplier: 1.85,
+    minimumRoomFloor: 4.2,
+    rrMin: 1.8,
+    stopMin: 1.8,
+    stopMax: 5.4,
+    hardRejectDailyRsi: 68,
+    hardRejectOneHourRsi: 66,
+    hardRejectFourHourAdx: 16,
+    hardRejectPullbackFromHigh: 4,
+    hardRejectChange30d: 95,
+    hardRejectLateEntryRsi: 67,
+    setupIdealDistanceFromEma20: 1.8,
+    setupLateDistanceFromEma20: 3.4,
+    rangeHighPenalty: 76,
+    pullbackHealthyMin: 6,
+    pullbackHealthyMax: 18,
+    pullbackPenaltyHigh: 22,
+    confirmVolumeMin: 0.98,
+    confirmStrongCloseThreshold: 0.6,
+    confirmBodyAtrFactor: 0.2,
+    confirmRetestToleranceAtr: 0.22,
+    confirmRetestTolerancePrice: 0.0018,
+    confirmBreakoutRetestToleranceAtr: 0.28,
+    confirmBreakoutRetestTolerancePrice: 0.0022,
+    confirmTriggerBuffer: 0.998,
+    confirmPreviousCloseBuffer: 0.996,
+    confirmWaitingRetestCloseBuffer: 0.996,
+    confirmWaitingRetestLowBufferMultiplier: 1,
+    noDataPenalty: -12,
+    waitingBreakoutRetestPenalty: -9,
+    waitingRetestPenalty: -10,
+    waitingClosePenalty: -12,
+    strongCloseReward: 8,
+    retestReward: 10,
+    breakoutRetestReward: 12,
+  };
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -126,17 +268,20 @@ function getCandleBodyPercent(candle: OHLCItem | null | undefined): number | nul
   return (Math.abs(candle.close - candle.open) / candle.close) * 100;
 }
 
-function evaluateEntryConfirmation(params: {
-  candles1h: OHLCItem[];
-  price: number;
-  atr1h: number | null;
-  entryZoneLow: number;
-  entryZoneHigh: number;
-  nearestResistance: number | null;
-  ema20: number | null;
-  recentSwingHigh: number | null;
-  volumeRatio: number | null;
-}): EntryConfirmation {
+function evaluateEntryConfirmation(
+  params: {
+    candles1h: OHLCItem[];
+    price: number;
+    atr1h: number | null;
+    entryZoneLow: number;
+    entryZoneHigh: number;
+    nearestResistance: number | null;
+    ema20: number | null;
+    recentSwingHigh: number | null;
+    volumeRatio: number | null;
+  },
+  thresholds: SignalThresholds
+): EntryConfirmation {
   const {
     candles1h,
     price,
@@ -157,7 +302,7 @@ function evaluateEntryConfirmation(params: {
     return {
       status: "NO_DATA",
       strategy: "NONE",
-      scoreDelta: -12,
+      scoreDelta: thresholds.noDataPenalty,
       confirmationText: "нет достаточного количества закрытых 1H свечей для подтверждения входа",
       confirmationLevel: entryZoneHigh,
       retestLevel: entryZoneLow,
@@ -173,23 +318,31 @@ function evaluateEntryConfirmation(params: {
   const retestLevel = Math.max(entryZoneLow, ema20 ?? entryZoneLow);
   const triggerLevel = Math.max(entryZoneHigh, ema20 ?? entryZoneHigh);
 
-  const volumeConfirmed = volumeRatio === null || volumeRatio >= 0.98;
+  const volumeConfirmed = volumeRatio === null || volumeRatio >= thresholds.confirmVolumeMin;
   const strongCloseAboveTrigger =
     latestClosed.close >= triggerLevel &&
     latestClosed.close > latestClosed.open &&
-    latestClosed.close >= latestClosed.low + (latestClosed.high - latestClosed.low) * 0.6 &&
-    bodyPercent >= Math.max(0.18, ((atr / Math.max(price, 0.00000001)) * 100) * 0.2) &&
+    latestClosed.close >=
+      latestClosed.low + (latestClosed.high - latestClosed.low) * thresholds.confirmStrongCloseThreshold &&
+    bodyPercent >=
+      Math.max(0.18, ((atr / Math.max(price, 0.00000001)) * 100) * thresholds.confirmBodyAtrFactor) &&
     volumeConfirmed;
 
-  const retestTolerance = Math.max(atr * 0.22, price * 0.0018);
+  const retestTolerance = Math.max(
+    atr * thresholds.confirmRetestToleranceAtr,
+    price * thresholds.confirmRetestTolerancePrice
+  );
   const retestHoldConfirmed =
     latestClosed.low <= retestLevel + retestTolerance &&
     latestClosed.close > retestLevel &&
-    latestClosed.close >= triggerLevel * 0.998 &&
+    latestClosed.close >= triggerLevel * thresholds.confirmTriggerBuffer &&
     latestClosed.close > latestClosed.open &&
-    previousClosed.close >= triggerLevel * 0.996;
+    previousClosed.close >= triggerLevel * thresholds.confirmPreviousCloseBuffer;
 
-  const breakoutRetestTolerance = Math.max(atr * 0.28, price * 0.0022);
+  const breakoutRetestTolerance = Math.max(
+    atr * thresholds.confirmBreakoutRetestToleranceAtr,
+    price * thresholds.confirmBreakoutRetestTolerancePrice
+  );
   const breakoutWasActive =
     breakoutLevel !== null &&
     previousClosed.close > breakoutLevel &&
@@ -206,7 +359,7 @@ function evaluateEntryConfirmation(params: {
     return {
       status: "CONFIRMED",
       strategy: "1H_BREAKOUT_RETEST",
-      scoreDelta: 12,
+      scoreDelta: thresholds.breakoutRetestReward,
       confirmationText: `вход подтвержден сценарием breakout-retest: предыдущая 1H свеча закрепилась выше ${formatNumber(
         breakoutLevel
       )}, последняя закрытая свеча удержала ретест`,
@@ -222,7 +375,7 @@ function evaluateEntryConfirmation(params: {
     return {
       status: "CONFIRMED",
       strategy: "1H_RETEST",
-      scoreDelta: 10,
+      scoreDelta: thresholds.retestReward,
       confirmationText: `вход подтвержден retest-сценарием: последняя закрытая 1H свеча протестировала ${formatNumber(
         retestLevel
       )} и закрылась обратно выше зоны входа`,
@@ -238,7 +391,7 @@ function evaluateEntryConfirmation(params: {
     return {
       status: "CONFIRMED",
       strategy: "1H_CANDLE_CLOSE",
-      scoreDelta: 8,
+      scoreDelta: thresholds.strongCloseReward,
       confirmationText: `вход подтвержден: последняя закрытая 1H свеча уверенно закрылась выше ${formatNumber(
         triggerLevel
       )}`,
@@ -254,7 +407,7 @@ function evaluateEntryConfirmation(params: {
     return {
       status: "WAITING_BREAKOUT_RETEST",
       strategy: "NONE",
-      scoreDelta: -9,
+      scoreDelta: thresholds.waitingBreakoutRetestPenalty,
       confirmationText: `базовый breakout уже есть, но профессиональный вход ждет 1H retest уровня ${formatNumber(
         breakoutLevel
       )} и закрытие обратно выше него`,
@@ -266,11 +419,14 @@ function evaluateEntryConfirmation(params: {
     };
   }
 
-  if (latestClosed.close >= triggerLevel * 0.996 && latestClosed.low > retestLevel + retestTolerance) {
+  if (
+    latestClosed.close >= triggerLevel * thresholds.confirmWaitingRetestCloseBuffer &&
+    latestClosed.low > retestLevel + retestTolerance * thresholds.confirmWaitingRetestLowBufferMultiplier
+  ) {
     return {
       status: "WAITING_RETEST",
       strategy: "NONE",
-      scoreDelta: -10,
+      scoreDelta: thresholds.waitingRetestPenalty,
       confirmationText: `структура почти готова, но нужен 1H retest зоны ${formatNumber(
         retestLevel
       )} с удержанием и закрытием обратно выше ${formatNumber(triggerLevel)}`,
@@ -285,7 +441,7 @@ function evaluateEntryConfirmation(params: {
   return {
     status: "WAITING_1H_CLOSE",
     strategy: "NONE",
-    scoreDelta: -12,
+    scoreDelta: thresholds.waitingClosePenalty,
     confirmationText: `нет подтвержденного 1H close выше ${formatNumber(
       triggerLevel
     )}; вход разрешается только после закрытия часа или retest / breakout-retest сценария`,
@@ -297,7 +453,11 @@ function evaluateEntryConfirmation(params: {
   };
 }
 
-export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | null {
+export function evaluateMarketSignal(
+  market: MarketContext,
+  mode: BuyScanMode = "hard"
+): SignalEvaluation | null {
+  const thresholds = getSignalThresholds(mode);
   const price = market.spot.price;
   const daily = market.technicals;
   const intraday1h = daily.intraday1h;
@@ -337,9 +497,6 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     intraday1h.ema20 >= intraday1h.ema50 &&
     price >= intraday1h.ema20 * 0.9975;
 
-  const priceToSupportPercent =
-    structure.nearestSupport !== null ? percentDiff(structure.nearestSupport, price) : null;
-
   const pullbackBuyZoneDistancePercent =
     intraday1h.ema20 !== null ? Math.abs(((price - intraday1h.ema20) / intraday1h.ema20) * 100) : null;
 
@@ -367,9 +524,9 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
 
   const target1DistancePercent = percentDiff(price, rawTarget1);
   const minimumRoomPercent = Math.max(
-    atr1hPercent !== null ? atr1hPercent * 1.7 : 0,
-    stopDistancePercent !== null ? stopDistancePercent * 1.85 : 0,
-    4.2
+    atr1hPercent !== null ? atr1hPercent * thresholds.minimumRoomAtrMultiplier : 0,
+    stopDistancePercent !== null ? stopDistancePercent * thresholds.minimumRoomRiskMultiplier : 0,
+    thresholds.minimumRoomFloor
   );
 
   let regimeScore = 0;
@@ -380,90 +537,94 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     regimeScore -= 24;
     negatives.push("дневной режим рынка медвежий");
   } else {
-    regimeScore -= 4;
-    negatives.push("дневной тренд недостаточно сильный для уверенного long");
+    regimeScore -= 8;
+    negatives.push("дневной режим рынка еще не дал сильный бычий тренд");
   }
 
   if (daily.rsi14 !== null) {
     if (daily.rsi14 >= 50 && daily.rsi14 <= 62) {
       regimeScore += 8;
-      positives.push("дневной RSI в рабочей зоне без перегрева");
+      positives.push("дневной RSI находится в рабочей зоне устойчивого ап-тренда");
     } else if (daily.rsi14 > 68) {
-      regimeScore -= 14;
-      negatives.push("дневной RSI перегрет, вход после сильного разгона опасен");
+      regimeScore -= 12;
+      negatives.push("дневной RSI уже слишком высок — рынок может быть перегрет");
     } else if (daily.rsi14 < 46) {
-      regimeScore -= 8;
-      negatives.push("дневной RSI слабый для качественного long");
+      regimeScore -= 12;
+      negatives.push("дневной RSI слабый, buy-side momentum неустойчив");
     }
   }
 
   if (daily.adx14 !== null) {
     if (daily.adx14 >= 18) {
       regimeScore += 6;
-      positives.push("дневной ADX подтверждает наличие тренда");
+      positives.push("дневной ADX подтверждает наличие направленного движения");
     } else {
       regimeScore -= 4;
-      negatives.push("дневной ADX слабый, тренд может быть рыхлым");
+      negatives.push("дневной ADX показывает слабый тренд");
     }
   }
 
   if (daily.macdHistogram !== null) {
     if (daily.macdHistogram > 0) {
       regimeScore += 6;
-      positives.push("дневной MACD остается на стороне покупателей");
+      positives.push("дневной MACD histogram положительный");
     } else {
       regimeScore -= 6;
-      negatives.push("дневной MACD не поддерживает long");
+      negatives.push("дневной MACD еще не поддерживает buy-side momentum");
     }
   }
 
   let setupScore = 0;
   if (fourHourBullTrend) {
     setupScore += 18;
-    positives.push("4H структура бычья: EMA20 выше EMA50 и цена удерживает трендовую зону");
+    positives.push("4H структура держит EMA20 выше EMA50 и подтверждает среднесрочный ап-тренд");
   } else {
     setupScore -= 18;
-    negatives.push("4H структура не подтверждает продолжение вверх");
+    negatives.push("4H структура недостаточно сильна для безопасного swing-long");
   }
 
   if (intraday4h.rsi14 !== null) {
     if (intraday4h.rsi14 >= 50 && intraday4h.rsi14 <= 66) {
-      setupScore += 6;
-      positives.push("4H RSI в рабочей зоне");
+      setupScore += 7;
+      positives.push("4H RSI подтверждает фазу продолжения тренда");
     } else if (intraday4h.rsi14 > 70) {
       setupScore -= 8;
-      negatives.push("4H RSI перегрет");
+      negatives.push("4H RSI слишком высок, рынок уже растянут вверх");
     }
   }
 
   if (intraday4h.adx14 !== null) {
     if (intraday4h.adx14 >= 18) {
       setupScore += 6;
-      positives.push("4H ADX подтверждает направленное движение");
-    } else {
-      setupScore -= 4;
-      negatives.push("4H ADX слабый, тренд может не дотянуть до целей");
+      positives.push("4H ADX подтверждает силу тренда");
+    } else if (intraday4h.adx14 < 16) {
+      setupScore -= 7;
+      negatives.push("4H ADX слабый, структура может быть шумовой");
     }
   }
 
   if (oneHourBullStructure) {
-    setupScore += 12;
-    positives.push("1H цена держится над EMA20 и не ломает входную структуру");
+    setupScore += 16;
+    positives.push("1H структура не сломана: EMA20 удерживается выше EMA50");
   } else {
-    setupScore -= 14;
-    negatives.push("1H структура входа сломана или уже теряет EMA20");
+    setupScore -= 18;
+    negatives.push("1H структура сломана, вход получается против локального потока");
   }
 
   if (intraday1h.rsi14 !== null) {
     if (intraday1h.rsi14 >= 48 && intraday1h.rsi14 <= 62) {
-      setupScore += 10;
-      positives.push("1H RSI подходит для входа после отката, а не на пике");
+      setupScore += 7;
+      positives.push("1H RSI в рабочей зоне для входа по тренду");
     } else if (intraday1h.rsi14 > 66) {
-      setupScore -= 12;
-      negatives.push("1H RSI перегрет возле точки входа");
+      setupScore -= mode === "soft" ? 6 : 9;
+      negatives.push(
+        mode === "soft"
+          ? "1H RSI повышен — в soft-режиме это penalty, а не мгновенный reject"
+          : "1H RSI слишком высок — рынок уже разогнан для консервативного входа"
+      );
     } else if (intraday1h.rsi14 < 44) {
       setupScore -= 8;
-      negatives.push("1H RSI слишком слабый, импульс может гаснуть");
+      negatives.push("1H RSI слабый, локальный импульс не подтвержден");
     }
   }
 
@@ -478,12 +639,16 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   }
 
   if (pullbackBuyZoneDistancePercent !== null) {
-    if (pullbackBuyZoneDistancePercent <= 1.8) {
+    if (pullbackBuyZoneDistancePercent <= thresholds.setupIdealDistanceFromEma20) {
       setupScore += 8;
       positives.push("цена не слишком растянута от 1H EMA20");
-    } else if (pullbackBuyZoneDistancePercent > 3.4) {
-      setupScore -= 10;
-      negatives.push("цена слишком далеко от 1H EMA20, высок риск запоздалого входа");
+    } else if (pullbackBuyZoneDistancePercent > thresholds.setupLateDistanceFromEma20) {
+      setupScore -= mode === "soft" ? 7 : 10;
+      negatives.push(
+        mode === "soft"
+          ? "цена уже заметно ушла от 1H EMA20, но soft-режим допускает чуть более поздний вход"
+          : "цена слишком далеко от 1H EMA20, высок риск запоздалого входа"
+      );
     }
   }
 
@@ -504,6 +669,13 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
   ) {
     spaceScore += 20;
     positives.push("до ближайшего сопротивления хватает пространства для первой цели");
+  } else if (
+    mode === "soft" &&
+    structure.roomToResistancePercent !== null &&
+    structure.roomToResistancePercent >= minimumRoomPercent * 0.92
+  ) {
+    spaceScore -= 6;
+    negatives.push("room до сопротивления чуть ниже идеала, soft-режим оставляет рынок в игре с penalty");
   } else {
     spaceScore -= 22;
     negatives.push("до ближайшего сопротивления мало места относительно риска");
@@ -513,22 +685,28 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     if (rangePosition >= 35 && rangePosition <= 68) {
       spaceScore += 8;
       positives.push("цена находится в рабочей части 30-дневного диапазона");
-    } else if (rangePosition > 76) {
+    } else if (rangePosition > thresholds.rangeHighPenalty) {
       spaceScore -= 12;
       negatives.push("цена слишком высоко в 30-дневном диапазоне — это часто запоздалый вход");
     }
   }
 
   if (pullbackFromHigh !== null) {
-    if (pullbackFromHigh >= 6 && pullbackFromHigh <= 18) {
+    if (
+      pullbackFromHigh >= thresholds.pullbackHealthyMin &&
+      pullbackFromHigh <= thresholds.pullbackHealthyMax
+    ) {
       spaceScore += 8;
       positives.push("есть здоровый откат от локального максимума, вход не на самом пике");
-    } else if (pullbackFromHigh < 4) {
+    } else if (pullbackFromHigh < thresholds.hardRejectPullbackFromHigh) {
       spaceScore -= 12;
       negatives.push("цена почти у максимума месяца, риск купить вершину высокий");
-    } else if (pullbackFromHigh > 22) {
+    } else if (pullbackFromHigh > thresholds.pullbackPenaltyHigh) {
       spaceScore -= 6;
       negatives.push("откат слишком глубокий, структура может уже слабеть");
+    } else if (mode === "soft" && pullbackFromHigh < 4) {
+      spaceScore -= 5;
+      negatives.push("откат очень мелкий, но soft-режим считает это penalty, а не моментальным отказом");
     }
   }
 
@@ -571,10 +749,10 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     if (stopDistancePercent >= 2.2 && stopDistancePercent <= 4.8) {
       riskScore += 12;
       positives.push("стоп достаточно глубокий, чтобы пережить обычный шум, но еще контролируемый");
-    } else if (stopDistancePercent < 1.8) {
+    } else if (stopDistancePercent < thresholds.stopMin) {
       riskScore -= 12;
       negatives.push("стоп слишком близкий, обычный рыночный шум может выбить позицию");
-    } else if (stopDistancePercent > 5.4) {
+    } else if (stopDistancePercent > thresholds.stopMax) {
       riskScore -= 10;
       negatives.push("стоп слишком широкий, сделка становится неэффективной по риску");
     }
@@ -582,7 +760,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
 
   if (target1DistancePercent !== null && stopDistancePercent !== null) {
     const rr = target1DistancePercent / Math.max(stopDistancePercent, 0.0001);
-    if (rr >= 1.8) {
+    if (rr >= thresholds.rrMin) {
       riskScore += 12;
       positives.push("первая цель дает приемлемое соотношение риск/доходность");
     } else {
@@ -591,7 +769,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     }
   }
 
-  if ((daily.change30d ?? 0) > 95 && (daily.rsi14 ?? 0) > 67) {
+  if ((daily.change30d ?? 0) > thresholds.hardRejectChange30d && (daily.rsi14 ?? 0) > thresholds.hardRejectLateEntryRsi) {
     riskScore -= 16;
     negatives.push("монета уже слишком сильно разогнана за 30 дней — лучше ждать новый базовый откат");
   }
@@ -615,17 +793,20 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
       ? Math.min(price, intraday1h.ema20 + atr1h * 0.18)
       : price;
 
-  const confirmation = evaluateEntryConfirmation({
-    candles1h: intraday1h.candles,
-    price,
-    atr1h,
-    entryZoneLow,
-    entryZoneHigh,
-    nearestResistance: structure.nearestResistance,
-    ema20: intraday1h.ema20,
-    recentSwingHigh: intraday1h.recentSwingHigh,
-    volumeRatio: intraday1h.volumeRatio,
-  });
+  const confirmation = evaluateEntryConfirmation(
+    {
+      candles1h: intraday1h.candles,
+      price,
+      atr1h,
+      entryZoneLow,
+      entryZoneHigh,
+      nearestResistance: structure.nearestResistance,
+      ema20: intraday1h.ema20,
+      recentSwingHigh: intraday1h.recentSwingHigh,
+      volumeRatio: intraday1h.volumeRatio,
+    },
+    thresholds
+  );
 
   const confirmationScore = confirmation.scoreDelta;
   if (confirmation.status === "CONFIRMED") {
@@ -640,27 +821,44 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
 
   const hardBearish = daily.trend30d === "BEARISH" && (daily.change30d ?? 0) < -5;
 
+  const roomFailed =
+    structure.roomToResistancePercent !== null &&
+    structure.roomToResistancePercent < minimumRoomPercent &&
+    !(mode === "soft" && structure.roomToResistancePercent >= minimumRoomPercent * 0.92);
+
+  const stopFailed =
+    stopDistancePercent !== null &&
+    (stopDistancePercent < thresholds.stopMin || stopDistancePercent > thresholds.stopMax);
+
+  const riskRewardFailed =
+    target1DistancePercent !== null &&
+    stopDistancePercent !== null &&
+    target1DistancePercent / Math.max(stopDistancePercent, 0.0001) < thresholds.rrMin;
+
+  const severeLateEntry =
+    (daily.change30d ?? 0) > thresholds.hardRejectChange30d &&
+    (daily.rsi14 ?? 0) > thresholds.hardRejectLateEntryRsi;
+
   const hardReject =
     !dailyBullTrend ||
     !fourHourBullTrend ||
     !oneHourBullStructure ||
-    (daily.rsi14 !== null && daily.rsi14 > 68) ||
-    (intraday1h.rsi14 !== null && intraday1h.rsi14 > 66) ||
-    (intraday4h.adx14 !== null && intraday4h.adx14 < 16) ||
-    (pullbackFromHigh !== null && pullbackFromHigh < 4) ||
-    (structure.roomToResistancePercent !== null && structure.roomToResistancePercent < minimumRoomPercent) ||
-    (stopDistancePercent !== null && (stopDistancePercent < 1.8 || stopDistancePercent > 5.4)) ||
-    (target1DistancePercent !== null &&
-      stopDistancePercent !== null &&
-      target1DistancePercent / Math.max(stopDistancePercent, 0.0001) < 1.8) ||
-    ((daily.change30d ?? 0) > 95 && (daily.rsi14 ?? 0) > 67);
+    (daily.rsi14 !== null && daily.rsi14 > thresholds.hardRejectDailyRsi) ||
+    (intraday1h.rsi14 !== null && intraday1h.rsi14 > thresholds.hardRejectOneHourRsi) ||
+    (intraday4h.adx14 !== null && intraday4h.adx14 < thresholds.hardRejectFourHourAdx) ||
+    (pullbackFromHigh !== null && pullbackFromHigh < thresholds.hardRejectPullbackFromHigh) ||
+    roomFailed ||
+    stopFailed ||
+    riskRewardFailed ||
+    severeLateEntry;
 
-  const staticSetupPassed = !hardReject && score >= 74;
-  const buyAllowed = staticSetupPassed && confirmation.status === "CONFIRMED" && score >= 76;
+  const staticSetupPassed = !hardReject && score >= thresholds.stage2StaticScoreMin;
+  const buyAllowed =
+    staticSetupPassed && confirmation.status === "CONFIRMED" && score >= thresholds.stage2BuyScoreMin;
 
   const reason = buyAllowed
     ? [
-        "buy разрешен только после прохождения статических фильтров и отдельного confirm-layer по закрытой 1H свече",
+        `buy разрешен в режиме ${mode} только после прохождения статических фильтров и confirm-layer по закрытой 1H свече`,
         `подтверждение: ${confirmation.confirmationText}`,
         `room до ближайшего сопротивления: ${formatNumber(structure.roomToResistancePercent)}%`,
         `минимально допустимо: ${formatNumber(minimumRoomPercent)}%`,
@@ -671,7 +869,7 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     : hardBearish
       ? "дневной режим рынка слабый, импульс отрицательный и long-сценарий ломается"
       : [
-          "сигнал удержан в HOLD, потому что long-сценарий еще не получил confirm-layer по закрытой 1H свече",
+          `сигнал удержан в HOLD в режиме ${mode}, потому что long-сценарий еще не получил подтверждение или не добрал quality-threshold`,
           `статический сетап: ${staticSetupPassed ? "пройден" : "не пройден"}`,
           `статус подтверждения: ${confirmation.status}`,
           `подтверждение: ${confirmation.confirmationText}`,
@@ -735,5 +933,16 @@ export function evaluateMarketSignal(market: MarketContext): SignalEvaluation | 
     confirmationBreakoutLevel: confirmation.breakoutLevel,
     lastClosed1hCandleTime: confirmation.lastClosedCandleTime,
     lastClosed1hCandleClose: confirmation.lastClosedCandleClose,
+    scanMode: mode,
+    staticSetupPassed,
+    buyAllowed,
+    hardReject,
+    stage2StaticScoreMin: thresholds.stage2StaticScoreMin,
+    stage2BuyScoreMin: thresholds.stage2BuyScoreMin,
+    rrMin: thresholds.rrMin,
+    stopMin: thresholds.stopMin,
+    stopMax: thresholds.stopMax,
+    hardRejectOneHourRsi: thresholds.hardRejectOneHourRsi,
+    hardRejectPullbackFromHigh: thresholds.hardRejectPullbackFromHigh,
   };
 }

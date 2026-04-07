@@ -5,6 +5,7 @@ import {
   RejectionBreakdownItem,
   getBuyScanResult,
 } from "../../services/buy.service";
+import { BuyScanMode } from "../../services/signal.service";
 
 const STABLE_QUOTES = new Set([
   "USD",
@@ -120,6 +121,7 @@ function buildBreakdownSection(
 
 function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>): string {
   const summaryLines = [
+    `- Режим сканирования: /buy ${result.summary.scanMode}`,
     `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
     `- Stage 1 проверено быстрым фильтром: ${result.summary.stage1Checked}`,
     `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
@@ -173,29 +175,40 @@ function buildBuyCard(item: BuyCandidate): string {
   ].join("\n");
 }
 
+function parseBuyMode(text: string): BuyScanMode {
+  const normalized = text.trim().toLowerCase();
+  if (normalized === "/buy soft") return "soft";
+  return "hard";
+}
+
 export function registerBuyHandler(bot: Telegraf) {
   bot.command("buy", async (ctx) => {
     try {
+      const text = "text" in ctx.message ? ctx.message.text : "/buy";
+      const mode = parseBuyMode(text);
+
       await ctx.reply(
-        "Сканирую Pionex staged scan: stage 1 = быстрый отсев по ticker/bookTicker, stage 2 = полный анализ лучших кандидатов, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
+        mode === "soft"
+          ? "Сканирую Pionex в soft-режиме: Stage 1 расширен по количеству кандидатов, Stage 2 мягче по score / room / R:R / RSI / pullback / EMA20 / confirm-layer..."
+          : "Сканирую Pionex в hard-режиме: stage 1 = быстрый отсев по ticker/bookTicker, stage 2 = полный анализ лучших кандидатов, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
       );
 
-      const result = await getBuyScanResult(10);
+      const result = await getBuyScanResult(10, mode);
 
       const summaryBlock = buildSummaryBlock(result);
 
       const stage1BreakdownSection = buildBreakdownSection(
-        "Breakdown Stage 1 — причины отсева на быстром фильтре:",
+        `Breakdown Stage 1 — причины отсева на быстром фильтре (${mode}):`,
         result.summary.stage1RejectionBreakdown
       );
 
       const stage2BreakdownSection = buildBreakdownSection(
-        "Breakdown Stage 2 — причины отказа на полном анализе:",
+        `Breakdown Stage 2 — причины отказа на полном анализе (${mode}):`,
         result.summary.stage2RejectionBreakdown
       );
 
       const stage3BreakdownSection = buildBreakdownSection(
-        "Breakdown Stage 3 — причины отказа на confirm-layer:",
+        `Breakdown Stage 3 — причины отказа на confirm-layer (${mode}):`,
         result.summary.stage3RejectionBreakdown
       );
 
@@ -203,7 +216,7 @@ export function registerBuyHandler(bot: Telegraf) {
 
       if (!result.buys.length) {
         const message = joinMessageSections([
-          "⚪ Сейчас покупать нечего.",
+          `⚪ Сейчас покупать нечего в режиме /buy ${mode}.`,
           joinMessageSections([
             "Что происходит на рынке:",
             summaryBlock,
@@ -222,7 +235,7 @@ export function registerBuyHandler(bot: Telegraf) {
       const buyCards = result.buys.map((item: BuyCandidate) => buildBuyCard(item)).join("\n\n");
 
       const message = joinMessageSections([
-        "🟢 Пары с подтвержденным сигналом BUY",
+        `🟢 Пары с подтвержденным сигналом BUY (/buy ${mode})`,
         joinMessageSections([
           "Сводка staged scan:",
           summaryBlock,
