@@ -4,12 +4,74 @@ import { MarketContext } from "./market.service";
 import { evaluateMarketSignal } from "./signal.service";
 
 const groq = new Groq({
-  apiKey: env.GROQ_API_KEY,
+  apiKey: env.GROQ_API_KEY
 });
 
 function formatNullable(value: number | null, digits = 2): string {
   if (value === null || !Number.isFinite(value)) return "n/a";
   return value.toFixed(digits);
+}
+
+function buildCompactMarketSnapshot(market: MarketContext) {
+  return {
+    asset: {
+      symbol: market.asset.symbol,
+      name: market.asset.name
+    },
+    pair: market.pair.display,
+    exchange: market.pair.exchange,
+    spot: {
+      price: market.spot.price,
+      priceUsd: market.spot.priceUsd,
+      change24h: market.spot.change24h,
+      marketCapUsd: market.spot.marketCapUsd
+    },
+    technicals30d: {
+      high30d: market.technicals.high30d,
+      low30d: market.technicals.low30d,
+      change30d: market.technicals.change30d,
+      trend30d: market.technicals.trend30d,
+      rsi14: market.technicals.rsi14,
+      sma7: market.technicals.sma7,
+      sma30: market.technicals.sma30,
+      ema20: market.technicals.ema20,
+      ema50: market.technicals.ema50,
+      macdLine: market.technicals.macdLine,
+      macdSignal: market.technicals.macdSignal,
+      macdHistogram: market.technicals.macdHistogram
+    },
+    structure: {
+      nearestResistance: market.technicals.structure.nearestResistance,
+      nextResistance: market.technicals.structure.nextResistance,
+      nearestSupport: market.technicals.structure.nearestSupport,
+      roomToResistancePercent: market.technicals.structure.roomToResistancePercent
+    },
+    intraday1h: {
+      rsi14: market.technicals.intraday1h.rsi14,
+      ema20: market.technicals.intraday1h.ema20,
+      ema50: market.technicals.intraday1h.ema50,
+      atr14: market.technicals.intraday1h.atr14,
+      macdLine: market.technicals.intraday1h.macdLine,
+      macdSignal: market.technicals.intraday1h.macdSignal,
+      macdHistogram: market.technicals.intraday1h.macdHistogram,
+      recentSwingHigh: market.technicals.intraday1h.recentSwingHigh,
+      recentSwingLow: market.technicals.intraday1h.recentSwingLow
+    },
+    execution: {
+      bestBid: market.execution.bestBid,
+      bestAsk: market.execution.bestAsk,
+      spreadPercent: market.execution.spreadPercent,
+      orderBookImbalance: market.execution.orderBookImbalance
+    },
+    liquidity: {
+      totalTvlUsd: market.liquidity.totalTvlUsd,
+      protocolsUsed: market.liquidity.protocolsUsed
+    },
+    sentiment: {
+      socialVolumeTotal: market.sentiment.socialVolumeTotal,
+      socialDominanceLatest: market.sentiment.socialDominanceLatest
+    }
+  };
 }
 
 export async function askAI(
@@ -44,8 +106,14 @@ export async function askAI(
       totalTvlUsd: market.liquidity.totalTvlUsd,
       socialVolumeTotal: market.sentiment.socialVolumeTotal,
       socialDominanceLatest: market.sentiment.socialDominanceLatest,
-    },
+      atr1hPercent: evaluation.atr1hPercent,
+      nearestResistance: evaluation.nearestResistance,
+      nearestSupport: evaluation.nearestSupport,
+      entryConfirmationText: evaluation.entryConfirmationText
+    }
   };
+
+  const compactMarketSnapshot = buildCompactMarketSnapshot(market);
 
   const response = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
@@ -65,12 +133,13 @@ export async function askAI(
 
 Дополнительные правила:
 - Не выдумывай цены и метрики.
-- Используй только переданный market context и deterministic signal block.
+- Используй только переданный compact market snapshot и deterministic signal block.
 - Основной горизонт анализа: 1 месяц (30 дней).
 - Дополнительно учитывай 24ч только как краткосрочный фон.
 - Если данных недостаточно, скажи это прямо.
 - Обязательно укажи риски.
-        `.trim(),
+- Ответ должен быть компактным и полезным, без длинных вводных.
+        `.trim()
       },
       {
         role: "user",
@@ -79,40 +148,37 @@ export async function askAI(
 ${question}
 
 Deterministic signal block:
-${JSON.stringify(deterministicBlock, null, 2)}
+${JSON.stringify(deterministicBlock)}
 
-Контекст рынка:
-${JSON.stringify(market, null, 2)}
+Compact market snapshot:
+${JSON.stringify(compactMarketSnapshot)}
 
 Сформируй ответ строго в структуре:
 
-1. Краткий вывод:
-- коротко опиши ситуацию за 30 дней
+1. Краткий вывод
+2. Сигнал
+3. Обоснование
+4. Риски
 
-2. Сигнал:
-- укажи РОВНО этот сигнал из deterministic signal block без изменений
-
-3. Обоснование:
-- цена сейчас
+В разделе "Обоснование" используй только:
+- цену сейчас
 - изменение за 24ч
 - изменение за 30д
 - тренд за 30д
 - RSI
-- диапазон high/low за 30д
+- high/low за 30д
 - score
-- ключевые плюсы и минусы из deterministic signal block
+- ключевые плюсы и минусы
 - ликвидность и sentiment, если они есть
-
-4. Риски:
-- 2-4 коротких пункта
+- уровни / подтверждение входа, если они есть
 
 Запрещено:
 - менять сигнал
 - писать другой BUY/HOLD/SELL, чем в deterministic signal block
 - придумывать данные, которых нет
-        `.trim(),
-      },
-    ],
+        `.trim()
+      }
+    ]
   });
 
   const content = response.choices[0]?.message?.content?.trim();
@@ -140,6 +206,6 @@ ${JSON.stringify(market, null, 2)}
     ``,
     `4. Риски:`,
     `- Возможна смена краткосрочного импульса.`,
-    `- При слабой ликвидности или sentiment точность сигнала снижается.`,
+    `- При слабой ликвидности или sentiment точность сигнала снижается.`
   ].join("\n");
 }

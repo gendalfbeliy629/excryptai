@@ -20,6 +20,8 @@ import {
   setSharedBuyScanWarmupPromise
 } from "./utils/buy-cache";
 
+const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+
 const app = express();
 
 app.use(express.json());
@@ -89,10 +91,20 @@ type MarketListItem = {
   score: number;
 };
 
-async function warmBuySignalsCache(): Promise<void> {
-  const cached = getSharedBuyScanResult(5);
-  if (cached) {
-    return;
+async function warmBuySignalsCache(options?: {
+  force?: boolean;
+  mode?: "hard" | "soft";
+  limit?: number;
+}): Promise<void> {
+  const force = options?.force ?? false;
+  const mode = options?.mode ?? "hard";
+  const limit = Math.max(10, options?.limit ?? 10);
+
+  if (!force) {
+    const cached = getSharedBuyScanResult(5, mode);
+    if (cached) {
+      return;
+    }
   }
 
   const currentWarmupPromise = getSharedBuyScanWarmupPromise();
@@ -102,7 +114,7 @@ async function warmBuySignalsCache(): Promise<void> {
 
   const nextWarmupPromise = (async () => {
     try {
-      const result = await getBuyScanResult(10, "hard");
+      const result = await getBuyScanResult(limit, mode);
       setSharedBuyScanResult(result);
     } finally {
       setSharedBuyScanWarmupPromise(null);
@@ -115,9 +127,20 @@ async function warmBuySignalsCache(): Promise<void> {
 }
 
 async function getDashboardBuyScanResult(limit = 5): Promise<BuyScanResult> {
-  const cached = getSharedBuyScanResult(limit);
+  const cached = getSharedBuyScanResult(limit, "hard");
   if (cached) {
     return cached;
+  }
+
+  await warmBuySignalsCache({
+    force: false,
+    mode: "hard",
+    limit: Math.max(limit, 10)
+  });
+
+  const warmed = getSharedBuyScanResult(limit, "hard");
+  if (warmed) {
+    return warmed;
   }
 
   const result = await getBuyScanResult(Math.max(limit, 10), "hard");
@@ -178,6 +201,7 @@ app.get("/", (_req, res) => {
       "/health",
       "/api/health",
       "/api/dashboard/bootstrap-status",
+      "/api/dashboard/refresh-cache",
       "/api/dashboard",
       "/api/markets",
       "/api/markets/:symbol",
@@ -210,11 +234,11 @@ app.get("/api/symbols", (_req, res) => {
 
 app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
   try {
-    const cached = getSharedBuyScanResult(5);
+    const cached = getSharedBuyScanResult(5, "hard");
     const cacheStatus = getSharedBuyScanStatus();
 
     if (!cached && !getSharedBuyScanWarmupPromise()) {
-      void warmBuySignalsCache().catch((error) => {
+      void warmBuySignalsCache({ force: false, mode: "hard", limit: 10 }).catch((error) => {
         console.error("Buy signal warmup failed:", error);
       });
     }
@@ -223,11 +247,36 @@ app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
       buySignalsCacheReady: cacheStatus.hasReadyCache,
       buySignalsCacheWarming: cacheStatus.warming,
       cacheAgeMs: cacheStatus.cacheAgeMs,
+      cacheExpiresInMs: cacheStatus.cacheExpiresInMs,
       warmedAt: cacheStatus.warmedAt,
       scanMode: cacheStatus.latestMode
     });
   } catch (error) {
     return fail(res, error);
+  }
+});
+
+app.get("/api/dashboard/refresh-cache", async (_req, res) => {
+  try {
+    await warmBuySignalsCache({
+      force: true,
+      mode: "hard",
+      limit: 10
+    });
+
+    const cacheStatus = getSharedBuyScanStatus();
+
+    return ok(res, {
+      buySignalsCacheReady: cacheStatus.hasReadyCache,
+      buySignalsCacheWarming: cacheStatus.warming,
+      cacheAgeMs: cacheStatus.cacheAgeMs,
+      cacheExpiresInMs: cacheStatus.cacheExpiresInMs,
+      warmedAt: cacheStatus.warmedAt,
+      scanMode: cacheStatus.latestMode,
+      refreshedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    return fail(res, error, 500);
   }
 });
 
@@ -381,7 +430,7 @@ app.get("/api/ai/:symbol", async (req, res) => {
     const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawSymbol);
     const market = await buildMarketContext(baseSymbol, quoteSymbol);
     const text = await askAI(
-      `Дай аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
+      `Дай краткую аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
       market
     );
 
@@ -409,6 +458,26 @@ const server = app.listen(env.PORT, env.HOST, () => {
   console.log(`API server running on http://${env.HOST}:${env.PORT}`);
 });
 
+const refreshTimer = setInterval(() => {
+  void warmBuySignalsCache({
+    force: true,
+    mode: "hard",
+    limit: 10
+  }).catch((error) => {
+    console.error("Scheduled buy signal refresh failed:", error);
+  });
+}, BUY_CACHE_REFRESH_INTERVAL_MS);
+
+refreshTimer.unref?.();
+
+void warmBuySignalsCache({
+  force: true,
+  mode: "hard",
+  limit: 10
+}).catch((error) => {
+  console.error("Initial buy signal warmup failed:", error);
+});
+
 let launchedBot: ReturnType<typeof getBot> | null = null;
 
 (async () => {
@@ -431,11 +500,13 @@ let launchedBot: ReturnType<typeof getBot> | null = null;
 })();
 
 process.once("SIGINT", () => {
+  clearInterval(refreshTimer);
   launchedBot?.stop("SIGINT");
   server.close();
 });
 
 process.once("SIGTERM", () => {
+  clearInterval(refreshTimer);
   launchedBot?.stop("SIGTERM");
   server.close();
 });

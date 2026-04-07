@@ -82,7 +82,13 @@ export type DashboardBootstrapStatus = {
   buySignalsCacheReady: boolean;
   buySignalsCacheWarming: boolean;
   cacheAgeMs: number | null;
+  cacheExpiresInMs?: number | null;
   warmedAt: string | null;
+  scanMode?: string | null;
+};
+
+export type RefreshBuySignalsResponse = DashboardBootstrapStatus & {
+  refreshedAt: string;
 };
 
 export type MarketsResponse = {
@@ -116,6 +122,11 @@ export type MarketDetail = {
       rsi14: number | null;
       sma7: number | null;
       sma30: number | null;
+      ema20: number | null;
+      ema50: number | null;
+      macdLine: number | null;
+      macdSignal: number | null;
+      macdHistogram: number | null;
       trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
       candles: Candle[];
     };
@@ -279,6 +290,10 @@ async function safeFetchApi<T>(path: string): Promise<ApiResult<T>> {
 
 export async function getDashboardBootstrapStatus(): Promise<DashboardBootstrapStatus> {
   return fetchApi<DashboardBootstrapStatus>("/dashboard/bootstrap-status");
+}
+
+export async function refreshBuySignalsCache(): Promise<RefreshBuySignalsResponse> {
+  return fetchApi<RefreshBuySignalsResponse>("/dashboard/refresh-cache");
 }
 
 export async function getDashboardData(): Promise<DashboardData> {

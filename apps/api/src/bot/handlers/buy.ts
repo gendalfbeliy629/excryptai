@@ -3,10 +3,13 @@ import {
   BuyCandidate,
   FailedMarketDetail,
   RejectionBreakdownItem,
-  getBuyScanResult,
+  getBuyScanResult
 } from "../../services/buy.service";
 import { BuyScanMode } from "../../services/signal.service";
-import { setSharedBuyScanResult } from "../../utils/buy-cache";
+import {
+  getSharedBuyScanResult,
+  setSharedBuyScanResult
+} from "../../utils/buy-cache";
 
 const STABLE_QUOTES = new Set([
   "USD",
@@ -15,7 +18,7 @@ const STABLE_QUOTES = new Set([
   "BUSD",
   "FDUSD",
   "TUSD",
-  "DAI",
+  "DAI"
 ]);
 
 function formatValue(value: number, quoteSymbol: string): string {
@@ -95,7 +98,7 @@ function buildFailedMarketsSection(failedDetails: FailedMarketDetail[]): string 
 
   return joinMessageSections([
     "Какие рынки не удалось проверить и почему:",
-    buildFailedMarketsBlock(failedDetails),
+    buildFailedMarketsBlock(failedDetails)
   ]);
 }
 
@@ -109,7 +112,10 @@ function buildBreakdownSection(
   }
 
   const lines = breakdown.slice(0, maxItems).map((item) => {
-    const samples = item.samplePairs.length ? ` | примеры: ${item.samplePairs.join(", ")}` : "";
+    const samples = item.samplePairs.length
+      ? ` | примеры: ${item.samplePairs.join(", ")}`
+      : "";
+
     return `- ${item.label}: ${item.count}${samples}`;
   });
 
@@ -135,7 +141,7 @@ function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>)
     `- SIDEWAYS: ${result.summary.sidewaysCount}`,
     `- BEARISH: ${result.summary.bearishCount}`,
     `- Среднее изменение за 30д: ${formatPercent(result.summary.avgChange30d)}`,
-    `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`,
+    `- Средний RSI: ${formatNullable(result.summary.avgRsi14)}`
   ];
 
   return summaryLines.join("\n");
@@ -172,7 +178,7 @@ function buildBuyCard(item: BuyCandidate): string {
     `Плюсы: ${item.positives.length ? item.positives.join("; ") : "n/a"}`,
     `Риски: ${item.negatives.length ? item.negatives.join("; ") : "n/a"}`,
     `|----------------------|`,
-    `Как сопровождать сделку:\n${managementText}`,
+    `Как сопровождать сделку:\n${managementText}`
   ].join("\n");
 }
 
@@ -190,12 +196,16 @@ export function registerBuyHandler(bot: Telegraf) {
 
       await ctx.reply(
         mode === "soft"
-          ? "Сканирую Pionex в soft-режиме: Stage 1 расширен по количеству кандидатов, Stage 2 мягче по score / room / R:R / RSI / pullback / EMA20 / confirm-layer..."
-          : "Сканирую Pionex в hard-режиме: stage 1 = быстрый отсев по ticker/bookTicker, stage 2 = полный анализ лучших кандидатов, stage 3 = confirm-layer только по закрытой 1H свече (close / retest / breakout-retest)..."
+          ? "Открываю данные из кеша BUY-сигналов или, если кеша для soft нет, запускаю мягкий scan Pionex..."
+          : "Открываю данные из кеша BUY-сигналов или, если кеша для hard нет, запускаю hard scan Pionex..."
       );
 
-      const result = await getBuyScanResult(10, mode);
-      setSharedBuyScanResult(result);
+      const cached = getSharedBuyScanResult(10, mode);
+      const result = cached ?? (await getBuyScanResult(10, mode));
+
+      if (!cached) {
+        setSharedBuyScanResult(result);
+      }
 
       const summaryBlock = buildSummaryBlock(result);
 
@@ -219,15 +229,12 @@ export function registerBuyHandler(bot: Telegraf) {
       if (!result.buys.length) {
         const message = joinMessageSections([
           `⚪ Сейчас покупать нечего в режиме /buy ${mode}.`,
-          joinMessageSections([
-            "Что происходит на рынке:",
-            summaryBlock,
-          ]),
+          joinMessageSections(["Что происходит на рынке:", summaryBlock]),
           stage1BreakdownSection,
           stage2BreakdownSection,
           stage3BreakdownSection,
           `Почему сейчас нет BUY: ${result.summary.explanation}`,
-          failedSection,
+          failedSection
         ]);
 
         await ctx.reply(message);
@@ -238,15 +245,12 @@ export function registerBuyHandler(bot: Telegraf) {
 
       const message = joinMessageSections([
         `🟢 Пары с подтвержденным сигналом BUY (/buy ${mode})`,
-        joinMessageSections([
-          "Сводка staged scan:",
-          summaryBlock,
-        ]),
+        joinMessageSections(["Сводка staged scan:", summaryBlock]),
         stage1BreakdownSection,
         stage2BreakdownSection,
         stage3BreakdownSection,
         failedSection,
-        buyCards,
+        buyCards
       ]);
 
       await ctx.reply(message);

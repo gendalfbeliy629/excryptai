@@ -1,7 +1,7 @@
 import type { BuyScanMode } from "../services/signal.service";
 import type { BuyScanResult } from "../services/buy.service";
 
-const BUY_CACHE_TTL_MS = 3 * 60 * 1000;
+const BUY_CACHE_TTL_MS = 70 * 60 * 1000;
 
 type BuyCacheEntry = {
   value: BuyScanResult;
@@ -23,6 +23,7 @@ const buyCacheStore: BuyCacheStore = {
 
 function getValidEntry(mode: BuyScanMode): BuyCacheEntry | null {
   const entry = buyCacheStore.entries[mode] ?? null;
+
   if (!entry) {
     return null;
   }
@@ -83,14 +84,30 @@ export function getSharedBuyScanResult(
 
 export function setSharedBuyScanResult(result: BuyScanResult): void {
   const mode = result.summary.scanMode;
+  const cachedAt = Date.now();
 
   buyCacheStore.entries[mode] = {
     value: result,
-    cachedAt: Date.now(),
-    expiresAt: Date.now() + BUY_CACHE_TTL_MS
+    cachedAt,
+    expiresAt: cachedAt + BUY_CACHE_TTL_MS
   };
 
   buyCacheStore.latestMode = mode;
+}
+
+export function clearSharedBuyScanResult(mode?: BuyScanMode): void {
+  if (mode) {
+    delete buyCacheStore.entries[mode];
+
+    if (buyCacheStore.latestMode === mode) {
+      buyCacheStore.latestMode = null;
+    }
+
+    return;
+  }
+
+  buyCacheStore.entries = {};
+  buyCacheStore.latestMode = null;
 }
 
 export function getSharedBuyScanStatus() {
@@ -101,6 +118,7 @@ export function getSharedBuyScanStatus() {
     hasReadyCache: Boolean(latestEntry),
     latestMode: latestEntry ? latestMode : null,
     cacheAgeMs: latestEntry ? Date.now() - latestEntry.cachedAt : null,
+    cacheExpiresInMs: latestEntry ? Math.max(0, latestEntry.expiresAt - Date.now()) : null,
     warmedAt: latestEntry ? new Date(latestEntry.cachedAt).toISOString() : null,
     warming: Boolean(buyCacheStore.warmupPromise)
   };
