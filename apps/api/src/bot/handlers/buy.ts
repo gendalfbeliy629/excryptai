@@ -6,6 +6,7 @@ import {
   getBuyScanResult,
 } from "../../services/buy.service";
 import { BuyScanMode } from "../../services/signal.service";
+import { setSharedBuyScanResult } from "../../utils/buy-cache";
 
 const STABLE_QUOTES = new Set([
   "USD",
@@ -194,6 +195,7 @@ export function registerBuyHandler(bot: Telegraf) {
       );
 
       const result = await getBuyScanResult(10, mode);
+      setSharedBuyScanResult(result);
 
       const summaryBlock = buildSummaryBlock(result);
 

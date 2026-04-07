@@ -1,12 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const RAW_BACKEND_URL =
-  process.env.API_URL ||
-  process.env.INTERNAL_API_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:4000/api";
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:4000/api";
 
-const BACKEND_URL = RAW_BACKEND_URL.replace(/\/$/, "");
+function normalizeBackendUrl(value: string | null | undefined): string {
+  const raw = value?.trim();
+
+  if (!raw) {
+    return DEFAULT_BACKEND_URL;
+  }
+
+  const withProtocol =
+    raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    const normalizedPath = parsed.pathname === "/" ? "/api" : parsed.pathname.replace(/\/$/, "");
+    parsed.pathname = normalizedPath;
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return DEFAULT_BACKEND_URL;
+  }
+}
+
+const BACKEND_URL = normalizeBackendUrl(
+  process.env.API_URL ||
+    process.env.INTERNAL_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    DEFAULT_BACKEND_URL
+);
 
 function buildTargetUrl(pathSegments: string[], request: NextRequest): string {
   const path = pathSegments.join("/");

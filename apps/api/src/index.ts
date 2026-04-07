@@ -12,9 +12,15 @@ import { getBuyScanResult, type BuyScanResult } from "./services/buy.service";
 import { getAssetInfo } from "./services/info.service";
 import { askAI } from "./services/ai.service";
 import { SYMBOL_TO_COINCAP_ID, normalizeSymbol } from "./utils/symbols";
+import {
+  getSharedBuyScanResult,
+  getSharedBuyScanStatus,
+  getSharedBuyScanWarmupPromise,
+  setSharedBuyScanResult,
+  setSharedBuyScanWarmupPromise
+} from "./utils/buy-cache";
 
 const app = express();
-const BUY_CACHE_TTL_MS = 3 * 60 * 1000;
 
 app.use(express.json());
 
@@ -83,69 +89,39 @@ type MarketListItem = {
   score: number;
 };
 
-type BuyCacheEntry = {
-  value: BuyScanResult;
-  cachedAt: number;
-  expiresAt: number;
-};
-
-let buyScanCache: BuyCacheEntry | null = null;
-let buyScanWarmupPromise: Promise<void> | null = null;
-
-function getCachedBuyScanResult(limit = 5): BuyScanResult | null {
-  if (!buyScanCache) {
-    return null;
-  }
-
-  if (Date.now() > buyScanCache.expiresAt) {
-    buyScanCache = null;
-    return null;
-  }
-
-  return {
-    ...buyScanCache.value,
-    buys: buyScanCache.value.buys.slice(0, limit)
-  };
-}
-
-function setBuyScanCache(result: BuyScanResult) {
-  buyScanCache = {
-    value: result,
-    cachedAt: Date.now(),
-    expiresAt: Date.now() + BUY_CACHE_TTL_MS
-  };
-}
-
 async function warmBuySignalsCache(): Promise<void> {
-  const cached = getCachedBuyScanResult(5);
+  const cached = getSharedBuyScanResult(5);
   if (cached) {
     return;
   }
 
-  if (buyScanWarmupPromise) {
-    return buyScanWarmupPromise;
+  const currentWarmupPromise = getSharedBuyScanWarmupPromise();
+  if (currentWarmupPromise) {
+    return currentWarmupPromise;
   }
 
-  buyScanWarmupPromise = (async () => {
+  const nextWarmupPromise = (async () => {
     try {
-      const result = await getBuyScanResult(10);
-      setBuyScanCache(result);
+      const result = await getBuyScanResult(10, "hard");
+      setSharedBuyScanResult(result);
     } finally {
-      buyScanWarmupPromise = null;
+      setSharedBuyScanWarmupPromise(null);
     }
   })();
 
-  return buyScanWarmupPromise;
+  setSharedBuyScanWarmupPromise(nextWarmupPromise);
+
+  return nextWarmupPromise;
 }
 
 async function getDashboardBuyScanResult(limit = 5): Promise<BuyScanResult> {
-  const cached = getCachedBuyScanResult(limit);
+  const cached = getSharedBuyScanResult(limit);
   if (cached) {
     return cached;
   }
 
-  const result = await getBuyScanResult(Math.max(limit, 10));
-  setBuyScanCache(result);
+  const result = await getBuyScanResult(Math.max(limit, 10), "hard");
+  setSharedBuyScanResult(result);
 
   return {
     ...result,
@@ -234,19 +210,21 @@ app.get("/api/symbols", (_req, res) => {
 
 app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
   try {
-    const cached = getCachedBuyScanResult(5);
+    const cached = getSharedBuyScanResult(5);
+    const cacheStatus = getSharedBuyScanStatus();
 
-    if (!cached && !buyScanWarmupPromise) {
+    if (!cached && !getSharedBuyScanWarmupPromise()) {
       void warmBuySignalsCache().catch((error) => {
         console.error("Buy signal warmup failed:", error);
       });
     }
 
     return ok(res, {
-      buySignalsCacheReady: Boolean(cached),
-      buySignalsCacheWarming: Boolean(buyScanWarmupPromise),
-      cacheAgeMs: buyScanCache ? Date.now() - buyScanCache.cachedAt : null,
-      warmedAt: buyScanCache ? new Date(buyScanCache.cachedAt).toISOString() : null
+      buySignalsCacheReady: cacheStatus.hasReadyCache,
+      buySignalsCacheWarming: cacheStatus.warming,
+      cacheAgeMs: cacheStatus.cacheAgeMs,
+      warmedAt: cacheStatus.warmedAt,
+      scanMode: cacheStatus.latestMode
     });
   } catch (error) {
     return fail(res, error);
