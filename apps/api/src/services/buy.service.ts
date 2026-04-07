@@ -391,7 +391,7 @@ function buildStage1Screening(
     }
 
     const spreadPercent =
-      bookTicker && bookTicker.askPrice > 0
+      bookTicker && bookTicker.askPrice > 0 && bookTicker.bidPrice > 0
         ? ((bookTicker.askPrice - bookTicker.bidPrice) / bookTicker.askPrice) * 100
         : null;
 
@@ -399,22 +399,35 @@ function buildStage1Screening(
     const change24h = ticker.changePercent24h;
 
     if (change24h !== null) {
-      if (change24h >= config.idealChangeMin && change24h <= config.idealChangeMax) score += 12;
-      else if (change24h > config.idealChangeMax && change24h <= config.extendedChangeMax) score += 4;
-      else score -= 8;
+      if (change24h >= config.idealChangeMin && change24h <= config.idealChangeMax) {
+        score += 12;
+      } else if (change24h > config.idealChangeMax && change24h <= config.extendedChangeMax) {
+        score += 4;
+      } else {
+        score -= 8;
+      }
     }
 
     if (ticker.amount > 0) {
-      if (ticker.amount >= config.highLiquidityAmount) score += 14;
-      else if (ticker.amount >= config.mediumLiquidityAmount) score += 10;
-      else if (ticker.amount >= config.lowLiquidityAmount) score += 6;
-      else score += 1;
+      if (ticker.amount >= config.highLiquidityAmount) {
+        score += 14;
+      } else if (ticker.amount >= config.mediumLiquidityAmount) {
+        score += 10;
+      } else if (ticker.amount >= config.lowLiquidityAmount) {
+        score += 6;
+      } else {
+        score += 1;
+      }
     }
 
     if (spreadPercent !== null) {
-      if (spreadPercent <= config.spreadTight) score += 10;
-      else if (spreadPercent <= config.spreadAcceptable) score += 5;
-      else score -= 10;
+      if (spreadPercent <= config.spreadTight) {
+        score += 10;
+      } else if (spreadPercent <= config.spreadAcceptable) {
+        score += 5;
+      } else {
+        score -= 10;
+      }
     }
 
     const intradayRangePercent =
@@ -952,7 +965,10 @@ function toSummary(
   return summary;
 }
 
-export async function getBuyScanResult(limit = 10, mode: BuyScanMode = "hard"): Promise<BuyScanResult> {
+export async function getBuyScanResult(
+  limit = 10,
+  mode: BuyScanMode = "hard"
+): Promise<BuyScanResult> {
   const [markets, tickers, bookTickers] = await Promise.all([
     getAllPionexSpotMarkets(),
     getAllPionexSpotTickers(),
