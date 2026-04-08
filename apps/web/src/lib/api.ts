@@ -27,6 +27,7 @@ export type MarketListItem = {
   rsi14: number | null;
   signal: "BUY" | "HOLD" | "SELL";
   score: number;
+  volume24h?: number;
 };
 
 export type BuyCandidate = {
@@ -74,7 +75,10 @@ export type DashboardData = {
     avgChange30d: number | null;
     avgRsi14: number | null;
     explanation: string;
+    scanMode?: string;
   };
+  generatedAt: string | null;
+  scanMode: "soft" | "hard";
   degraded?: boolean;
 };
 
@@ -129,6 +133,33 @@ export type MarketDetail = {
       macdHistogram: number | null;
       trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
       candles: Candle[];
+      intraday1h?: {
+        candles: Candle[];
+        rsi14: number | null;
+        ema20: number | null;
+        ema50: number | null;
+        atr14: number | null;
+        macdLine: number | null;
+        macdSignal: number | null;
+        macdHistogram: number | null;
+      };
+      intraday4h?: {
+        candles: Candle[];
+        rsi14: number | null;
+        ema20: number | null;
+        ema50: number | null;
+        atr14: number | null;
+        macdLine: number | null;
+        macdSignal: number | null;
+        macdHistogram: number | null;
+      };
+      structure?: {
+        nearestResistance: number | null;
+        nextResistance: number | null;
+        nearestSupport: number | null;
+        secondarySupport: number | null;
+        roomToResistancePercent: number | null;
+      };
     };
     liquidity: {
       totalTvlUsd: number | null;
@@ -288,16 +319,22 @@ async function safeFetchApi<T>(path: string): Promise<ApiResult<T>> {
   }
 }
 
-export async function getDashboardBootstrapStatus(): Promise<DashboardBootstrapStatus> {
-  return fetchApi<DashboardBootstrapStatus>("/dashboard/bootstrap-status");
+export async function getDashboardBootstrapStatus(
+  mode: "soft" | "hard" = "soft"
+): Promise<DashboardBootstrapStatus> {
+  return fetchApi<DashboardBootstrapStatus>(`/dashboard/bootstrap-status?mode=${mode}`);
 }
 
-export async function refreshBuySignalsCache(): Promise<RefreshBuySignalsResponse> {
-  return fetchApi<RefreshBuySignalsResponse>("/dashboard/refresh-cache");
+export async function refreshBuySignalsCache(
+  mode: "soft" | "hard" = "soft"
+): Promise<RefreshBuySignalsResponse> {
+  return fetchApi<RefreshBuySignalsResponse>(`/dashboard/refresh-cache?mode=${mode}`);
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  return fetchApi<DashboardData>("/dashboard");
+export async function getDashboardData(
+  mode: "soft" | "hard" = "soft"
+): Promise<DashboardData> {
+  return fetchApi<DashboardData>(`/dashboard?mode=${mode}`);
 }
 
 export async function getMarkets(limit = 30): Promise<MarketsResponse> {
@@ -316,8 +353,10 @@ export async function getAiAnalysis(symbol: string): Promise<AiResponse> {
   return fetchApi<AiResponse>(`/ai/${encodeURIComponent(symbol)}`);
 }
 
-export async function safeGetDashboardData(): Promise<ApiResult<DashboardData>> {
-  return safeFetchApi<DashboardData>("/dashboard");
+export async function safeGetDashboardData(
+  mode: "soft" | "hard" = "soft"
+): Promise<ApiResult<DashboardData>> {
+  return safeFetchApi<DashboardData>(`/dashboard?mode=${mode}`);
 }
 
 export async function safeGetMarkets(limit = 30): Promise<ApiResult<MarketsResponse>> {

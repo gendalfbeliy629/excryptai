@@ -13,7 +13,8 @@ import {
   InfoResponse,
   MarketDetail,
   MarketsResponse,
-  refreshBuySignalsCache
+  refreshBuySignalsCache,
+  Candle
 } from "../lib/api";
 import {
   formatCompactUsd,
@@ -43,6 +44,9 @@ type IndicatorKey =
   | "confirmation";
 
 type SidePanelMode = "summary" | "info" | "analytics";
+type BuyMode = "soft" | "hard";
+type ChartInterval = "1H" | "4H" | "1D";
+type ChartWindow = "1D" | "1W" | "1M";
 
 const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "ema20", label: "EMA 20" },
@@ -67,6 +71,20 @@ function normalizeTextBlock(text: string | null | undefined): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function formatDateTime(value: string | number | null | undefined): string {
+  if (!value) return "—";
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData | null): string[] {
@@ -230,6 +248,44 @@ function calculateMACD(values: number[]) {
   };
 }
 
+function lineY(value: number, min: number, max: number, top: number, height: number) {
+  if (max === min) return top + height / 2;
+  const ratio = (value - min) / (max - min);
+  return top + height - ratio * height;
+}
+
+function getChartCandles(detail: MarketDetail | null, interval: ChartInterval): Candle[] {
+  if (!detail) return [];
+
+  if (interval === "1H") {
+    return detail.market.technicals.intraday1h?.candles ?? [];
+  }
+
+  if (interval === "4H") {
+    return detail.market.technicals.intraday4h?.candles ?? [];
+  }
+
+  return detail.market.technicals.candles ?? [];
+}
+
+function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): number {
+  if (interval === "1H") {
+    if (windowValue === "1D") return 24;
+    if (windowValue === "1W") return 140;
+    return 140;
+  }
+
+  if (interval === "4H") {
+    if (windowValue === "1D") return 6;
+    if (windowValue === "1W") return 42;
+    return 140;
+  }
+
+  if (windowValue === "1D") return 1;
+  if (windowValue === "1W") return 7;
+  return 30;
+}
+
 function useSelectedMarket(
   initialDetail: MarketDetail | null,
   initialSelectedSymbol: string
@@ -285,11 +341,11 @@ function useSelectedMarket(
   };
 }
 
-async function waitUntilBuySignalsCacheReady() {
+async function waitUntilBuySignalsCacheReady(mode: BuyMode) {
   const maxAttempts = 120;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const status = await getDashboardBootstrapStatus();
+    const status = await getDashboardBootstrapStatus(mode);
 
     if (status.buySignalsCacheReady) {
       return status;
@@ -301,12 +357,6 @@ async function waitUntilBuySignalsCacheReady() {
   throw new Error("Кеш BUY-сигналов не успел прогреться. Повтори обновление через несколько секунд.");
 }
 
-function lineY(value: number, min: number, max: number, top: number, height: number) {
-  if (max === min) return top + height / 2;
-  const ratio = (value - min) / (max - min);
-  return top + height - ratio * height;
-}
-
 function TradingChart({
   detail,
   activeIndicators
@@ -314,40 +364,50 @@ function TradingChart({
   detail: MarketDetail | null;
   activeIndicators: Record<IndicatorKey, boolean>;
 }) {
-  const width = 1080;
-  const priceHeight = 320;
-  const rsiHeight = activeIndicators.rsi ? 92 : 0;
-  const macdHeight = activeIndicators.macd ? 104 : 0;
-  const gap = 18;
-  const left = 18;
-  const right = 76;
-  const top = 18;
+  const [interval, setIntervalValue] = useState<ChartInterval>("1H");
+  const [windowValue, setWindowValue] = useState<ChartWindow>("1W");
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
-  const candles = (detail?.market.technicals.candles ?? []).slice(-80);
+  const allCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
+  const visibleCount = getWindowCount(interval, windowValue);
+  const candles = useMemo(
+    () => allCandles.slice(-Math.min(visibleCount, allCandles.length)),
+    [allCandles, visibleCount]
+  );
+
   const closes = candles.map((item) => item.close);
+  const volumes = candles.map((item) => item.volumeTo ?? item.volumeFrom ?? 0);
   const ema20 = calculateEMA(closes, 20);
   const ema50 = calculateEMA(closes, 50);
   const rsi14 = calculateRSI(closes, 14);
   const macd = calculateMACD(closes);
 
+  const width = 1200;
+  const left = 18;
+  const right = 80;
+  const top = 18;
+  const priceHeight = 390;
+  const volumeHeight = 90;
+  const rsiHeight = activeIndicators.rsi ? 90 : 0;
+  const macdHeight = activeIndicators.macd ? 96 : 0;
+  const gap = 16;
+
   const totalHeight =
     top +
     priceHeight +
+    gap +
+    volumeHeight +
     (rsiHeight ? gap + rsiHeight : 0) +
     (macdHeight ? gap + macdHeight : 0) +
-    24;
+    22;
 
   if (!candles.length) {
-    return (
-      <div className="chart-empty">
-        Свечи временно недоступны. График будет показан, как только backend вернет candles.
-      </div>
-    );
+    return <div className="chart-empty">Свечи временно недоступны.</div>;
   }
 
   const chartWidth = width - left - right;
   const candleStep = chartWidth / candles.length;
-  const candleBodyWidth = Math.max(4, candleStep * 0.58);
+  const candleBodyWidth = Math.max(1.6, candleStep * 0.28);
 
   const overlayLevels = [
     activeIndicators.range ? detail?.signal.low30d : null,
@@ -361,18 +421,13 @@ function TradingChart({
     activeIndicators.confirmation ? detail?.signal.confirmationLevel : null
   ].filter((value): value is number => value !== null && Number.isFinite(value));
 
-  const minPrice = Math.min(...candles.map((item) => item.low), ...overlayLevels) * 0.985;
-  const maxPrice = Math.max(...candles.map((item) => item.high), ...overlayLevels) * 1.015;
-  const priceAreaBottom = top + priceHeight;
-  const rsiTop = priceAreaBottom + gap;
-  const macdTop = rsiTop + (rsiHeight ? rsiHeight + gap : 0);
+  const minPrice = Math.min(...candles.map((item) => item.low), ...overlayLevels) * 0.992;
+  const maxPrice = Math.max(...candles.map((item) => item.high), ...overlayLevels) * 1.008;
+  const maxVolume = Math.max(...volumes, 1);
 
-  const latestRsi = rsi14[rsi14.length - 1] ?? detail?.market.technicals.rsi14 ?? null;
-  const latestEma20 = ema20[ema20.length - 1] ?? detail?.market.technicals.ema20 ?? null;
-  const latestEma50 = ema50[ema50.length - 1] ?? detail?.market.technicals.ema50 ?? null;
-  const latestMacd = macd.macdLine[macd.macdLine.length - 1] ?? detail?.market.technicals.macdLine ?? null;
-  const latestMacdSignal =
-    macd.signalLine[macd.signalLine.length - 1] ?? detail?.market.technicals.macdSignal ?? null;
+  const volumeTop = top + priceHeight + gap;
+  const rsiTop = volumeTop + volumeHeight + gap;
+  const macdTop = rsiTop + (rsiHeight ? rsiHeight + gap : 0);
 
   const macdValues = [
     0,
@@ -381,132 +436,150 @@ function TradingChart({
     ...macd.histogram.filter((value): value is number => value !== null)
   ];
 
-  const minMacd = Math.min(...macdValues) * 1.12;
-  const maxMacd = Math.max(...macdValues) * 1.12;
+  const minMacd = Math.min(...macdValues) * 1.1;
+  const maxMacd = Math.max(...macdValues) * 1.1;
 
   function x(index: number) {
     return left + candleStep * index + candleStep / 2;
   }
 
-  const ema20Points = candles
-    .map((_, index) => {
-      const value = ema20[index];
-      return value === null ? null : `${x(index)},${lineY(value, minPrice, maxPrice, top, priceHeight)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
+  const hoveredIndex =
+    hoverIndex === null ? candles.length - 1 : Math.max(0, Math.min(candles.length - 1, hoverIndex));
+  const hoveredCandle = candles[hoveredIndex];
 
-  const ema50Points = candles
-    .map((_, index) => {
-      const value = ema50[index];
-      return value === null ? null : `${x(index)},${lineY(value, minPrice, maxPrice, top, priceHeight)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
+  function buildPolyline(points: Array<number | null>, min: number, max: number, chartTop: number, chartHeight: number) {
+    return candles
+      .map((_, index) => {
+        const value = points[index];
+        return value === null ? null : `${x(index)},${lineY(value, min, max, chartTop, chartHeight)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
 
-  const rsiPoints = candles
-    .map((_, index) => {
-      const value = rsi14[index];
-      return value === null ? null : `${x(index)},${lineY(value, 0, 100, rsiTop, rsiHeight)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
+  const ema20Points = buildPolyline(ema20, minPrice, maxPrice, top, priceHeight);
+  const ema50Points = buildPolyline(ema50, minPrice, maxPrice, top, priceHeight);
+  const rsiPoints = buildPolyline(rsi14, 0, 100, rsiTop, rsiHeight);
+  const macdPoints = buildPolyline(macd.macdLine, minMacd, maxMacd, macdTop, macdHeight);
+  const macdSignalPoints = buildPolyline(macd.signalLine, minMacd, maxMacd, macdTop, macdHeight);
 
-  const macdPoints = candles
-    .map((_, index) => {
-      const value = macd.macdLine[index];
-      return value === null ? null : `${x(index)},${lineY(value, minMacd, maxMacd, macdTop, macdHeight)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
-
-  const macdSignalPoints = candles
-    .map((_, index) => {
-      const value = macd.signalLine[index];
-      return value === null ? null : `${x(index)},${lineY(value, minMacd, maxMacd, macdTop, macdHeight)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
-
-  const dateStep = Math.max(1, Math.floor(candles.length / 6));
-  const dateLabels = candles.filter(
-    (_, index) => index % dateStep === 0 || index === candles.length - 1
-  );
-
-  function renderHorizontalLevel(value: number | null, color: string, label: string, dash = "6 6") {
+  function renderHorizontalLevel(value: number | null, label: string, className: string) {
     if (value === null || !Number.isFinite(value)) return null;
     const y = lineY(value, minPrice, maxPrice, top, priceHeight);
 
     return (
       <g key={`${label}-${value}`}>
-        <line
-          x1={left}
-          y1={y}
-          x2={width - right + 8}
-          y2={y}
-          stroke={color}
-          strokeWidth="1"
-          strokeDasharray={dash}
-        />
-        <text x={width - right + 12} y={y + 4} fill={color} fontSize="11">
-          {label}
+        <line x1={left} y1={y} x2={width - right} y2={y} className={className} />
+        <text x={width - right + 8} y={y + 4} className="tv-axis-label">
+          {formatPrice(value)}
         </text>
       </g>
     );
   }
 
+  const indicatorStats = [
+    {
+      key: "ema20" as IndicatorKey,
+      label: "EMA 20",
+      value: interval === "1D"
+        ? detail?.market.technicals.ema20
+        : interval === "4H"
+          ? detail?.market.technicals.intraday4h?.ema20
+          : detail?.market.technicals.intraday1h?.ema20
+    },
+    {
+      key: "ema50" as IndicatorKey,
+      label: "EMA 50",
+      value: interval === "1D"
+        ? detail?.market.technicals.ema50
+        : interval === "4H"
+          ? detail?.market.technicals.intraday4h?.ema50
+          : detail?.market.technicals.intraday1h?.ema50
+    },
+    {
+      key: "rsi" as IndicatorKey,
+      label: "RSI 14",
+      value: interval === "1D"
+        ? detail?.market.technicals.rsi14
+        : interval === "4H"
+          ? detail?.market.technicals.intraday4h?.rsi14
+          : detail?.market.technicals.intraday1h?.rsi14
+    },
+    {
+      key: "macd" as IndicatorKey,
+      label: "MACD",
+      value: interval === "1D"
+        ? detail?.market.technicals.macdLine
+        : interval === "4H"
+          ? detail?.market.technicals.intraday4h?.macdLine
+          : detail?.market.technicals.intraday1h?.macdLine
+    },
+    {
+      key: "supports" as IndicatorKey,
+      label: "Resistance",
+      value: detail?.signal.nearestResistance ?? null
+    },
+    {
+      key: "tradePlan" as IndicatorKey,
+      label: "Entry low",
+      value: detail?.signal.entryZoneLow ?? null
+    }
+  ];
+
   return (
     <div className="chart-shell">
-      <div className="tv-toolbar">
-        <div className="tv-toolbar-left">
-          <span className="tv-chip active">PIONEX</span>
-          <span className="tv-chip">30D</span>
-          <span className="tv-chip">1H confirm</span>
-        </div>
-
-        <div className="tv-toolbar-right">
-          <span className={signalClassName(detail?.signal.signal ?? "HOLD")}>
-            {detail?.signal.signal ?? "HOLD"}
-          </span>
-          <span className="tv-chip pair">{detail?.market.pair.display ?? "BTC/USDT"}</span>
-        </div>
-      </div>
-
-      <div className="chart-header chart-header-compact">
-        <div>
-          <div className="chart-title">{detail?.market.pair.display ?? "BTC/USDT"}</div>
-          <div className="chart-subtitle">
-            Светлый TradingView-подобный график в стиле Pionex с candle, EMA, RSI и MACD.
+      <div className="tv-topbar">
+        <div className="tv-symbol-group">
+          <div className="tv-symbol">{detail?.market.pair.display ?? "BTC/USDT"}</div>
+          <div className="tv-symbol-price">{formatPrice(detail?.market.spot.priceUsd ?? null)}</div>
+          <div className="tv-symbol-meta">
+            24H {formatPercent(detail?.market.spot.change24h ?? null)} · 30D{" "}
+            {formatPercent(detail?.market.technicals.change30d ?? null)}
           </div>
         </div>
 
-        <div className="chart-price-box">
-          <span>Текущая цена</span>
-          <strong>{formatPrice(detail?.market.spot.priceUsd ?? null)}</strong>
+        <div className="tv-badges">
+          <span className={signalClassName(detail?.signal.signal ?? "HOLD")}>
+            {detail?.signal.signal ?? "HOLD"}
+          </span>
+          <span className="tv-mini-chip">PIONEX</span>
         </div>
       </div>
 
-      <div className="chart-metrics chart-metrics-compact">
-        <div className="tv-metric">
-          <span>EMA 20</span>
-          <strong>{formatPrice(latestEma20)}</strong>
+      <div className="tv-controls">
+        <div className="tv-control-group">
+          {(["1H", "4H", "1D"] as ChartInterval[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={item === interval ? "tv-control active" : "tv-control"}
+              onClick={() => setIntervalValue(item)}
+            >
+              {item}
+            </button>
+          ))}
         </div>
-        <div className="tv-metric">
-          <span>EMA 50</span>
-          <strong>{formatPrice(latestEma50)}</strong>
+
+        <div className="tv-control-group">
+          {(["1D", "1W", "1M"] as ChartWindow[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={item === windowValue ? "tv-control active" : "tv-control"}
+              onClick={() => setWindowValue(item)}
+            >
+              {item}
+            </button>
+          ))}
         </div>
-        <div className="tv-metric">
-          <span>RSI 14</span>
-          <strong>{formatNumber(latestRsi)}</strong>
-        </div>
-        <div className="tv-metric">
-          <span>MACD</span>
-          <strong>{formatNumber(latestMacd, 4)}</strong>
-        </div>
-        <div className="tv-metric">
-          <span>Signal</span>
-          <strong>{formatNumber(latestMacdSignal, 4)}</strong>
-        </div>
+      </div>
+
+      <div className="tv-hover-card">
+        <span>{formatDateTime(hoveredCandle?.time)}</span>
+        <span>O {formatPrice(hoveredCandle?.open ?? null)}</span>
+        <span>H {formatPrice(hoveredCandle?.high ?? null)}</span>
+        <span>L {formatPrice(hoveredCandle?.low ?? null)}</span>
+        <span>C {formatPrice(hoveredCandle?.close ?? null)}</span>
       </div>
 
       <div className="chart-svg-wrap tradingview-shell">
@@ -515,24 +588,25 @@ function TradingChart({
           className="chart-svg"
           role="img"
           aria-label="market chart"
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const relativeX = event.clientX - rect.left;
+            const normalizedX = (relativeX / rect.width) * width;
+            const nextIndex = Math.round((normalizedX - left - candleStep / 2) / candleStep);
+            setHoverIndex(nextIndex);
+          }}
+          onMouseLeave={() => setHoverIndex(null)}
         >
-          <rect x="0" y="0" width={width} height={totalHeight} rx="18" fill="#ffffff" />
+          <rect x="0" y="0" width={width} height={totalHeight} rx="18" className="tv-bg" />
 
-          {Array.from({ length: 5 }).map((_, index) => {
-            const value = minPrice + ((maxPrice - minPrice) / 4) * index;
+          {Array.from({ length: 6 }).map((_, index) => {
+            const value = minPrice + ((maxPrice - minPrice) / 5) * index;
             const y = lineY(value, minPrice, maxPrice, top, priceHeight);
 
             return (
               <g key={`price-grid-${index}`}>
-                <line
-                  x1={left}
-                  y1={y}
-                  x2={width - right + 8}
-                  y2={y}
-                  stroke="#e9eef7"
-                  strokeWidth="1"
-                />
-                <text x={width - right + 12} y={y + 4} fill="#7c8aa5" fontSize="11">
+                <line x1={left} y1={y} x2={width - right} y2={y} className="tv-grid" />
+                <text x={width - right + 8} y={y + 4} className="tv-axis-label">
                   {formatPrice(value)}
                 </text>
               </g>
@@ -545,135 +619,92 @@ function TradingChart({
             const closeY = lineY(candle.close, minPrice, maxPrice, top, priceHeight);
             const highY = lineY(candle.high, minPrice, maxPrice, top, priceHeight);
             const lowY = lineY(candle.low, minPrice, maxPrice, top, priceHeight);
-            const candleColor = candle.close >= candle.open ? "#22c55e" : "#ef4444";
+            const candleClass = candle.close >= candle.open ? "tv-candle-up" : "tv-candle-down";
             const bodyY = Math.min(openY, closeY);
-            const bodyHeight = Math.max(2, Math.abs(closeY - openY));
+            const bodyHeight = Math.max(1.2, Math.abs(closeY - openY));
 
             return (
               <g key={candle.time}>
-                <line x1={cx} y1={highY} x2={cx} y2={lowY} stroke={candleColor} strokeWidth="1.2" />
+                <line x1={cx} y1={highY} x2={cx} y2={lowY} className={candleClass} />
                 <rect
                   x={cx - candleBodyWidth / 2}
                   y={bodyY}
                   width={candleBodyWidth}
                   height={bodyHeight}
-                  rx="1.5"
-                  fill={candleColor}
-                  opacity="0.96"
+                  className={candleClass}
                 />
               </g>
             );
           })}
 
           {activeIndicators.ema20 && ema20Points ? (
-            <polyline fill="none" stroke="#2563eb" strokeWidth="2" points={ema20Points} />
+            <polyline fill="none" className="tv-line-ema20" strokeWidth="1.5" points={ema20Points} />
           ) : null}
 
           {activeIndicators.ema50 && ema50Points ? (
-            <polyline fill="none" stroke="#f59e0b" strokeWidth="2" points={ema50Points} />
+            <polyline fill="none" className="tv-line-ema50" strokeWidth="1.5" points={ema50Points} />
           ) : null}
 
           {activeIndicators.range ? (
             <>
-              {renderHorizontalLevel(detail?.signal.low30d ?? null, "#94a3b8", "Low", "4 6")}
-              {renderHorizontalLevel(detail?.signal.high30d ?? null, "#64748b", "High", "4 6")}
+              {renderHorizontalLevel(detail?.signal.low30d ?? null, "Low", "tv-level tv-level-muted")}
+              {renderHorizontalLevel(detail?.signal.high30d ?? null, "High", "tv-level tv-level-muted")}
             </>
           ) : null}
 
           {activeIndicators.supports ? (
             <>
-              {renderHorizontalLevel(detail?.signal.nearestSupport ?? null, "#0f766e", "Support")}
-              {renderHorizontalLevel(detail?.signal.nearestResistance ?? null, "#ef4444", "Resistance")}
+              {renderHorizontalLevel(detail?.signal.nearestSupport ?? null, "Support", "tv-level tv-level-support")}
+              {renderHorizontalLevel(detail?.signal.nearestResistance ?? null, "Resistance", "tv-level tv-level-resistance")}
             </>
           ) : null}
 
           {activeIndicators.tradePlan ? (
             <>
-              {renderHorizontalLevel(detail?.signal.entryZoneLow ?? null, "#0ea5e9", "Entry low", "3 5")}
-              {renderHorizontalLevel(detail?.signal.entryZoneHigh ?? null, "#0ea5e9", "Entry high", "3 5")}
-              {renderHorizontalLevel(detail?.signal.protectiveStop ?? null, "#b91c1c", "Stop", "3 5")}
-              {renderHorizontalLevel(detail?.signal.breakEvenActivationPrice ?? null, "#16a34a", "BE", "3 5")}
+              {renderHorizontalLevel(detail?.signal.entryZoneLow ?? null, "Entry low", "tv-level tv-level-entry")}
+              {renderHorizontalLevel(detail?.signal.entryZoneHigh ?? null, "Entry high", "tv-level tv-level-entry")}
+              {renderHorizontalLevel(detail?.signal.protectiveStop ?? null, "Stop", "tv-level tv-level-stop")}
+              {renderHorizontalLevel(detail?.signal.breakEvenActivationPrice ?? null, "BE", "tv-level tv-level-be")}
             </>
           ) : null}
 
-          {activeIndicators.confirmation
-            ? renderHorizontalLevel(detail?.signal.confirmationLevel ?? null, "#7c3aed", "1H confirm", "3 5")
-            : null}
+          {activeIndicators.confirmation ? (
+            renderHorizontalLevel(detail?.signal.confirmationLevel ?? null, "Confirm", "tv-level tv-level-confirm")
+          ) : null}
 
-          {dateLabels.map((item) => {
-            const originalIndex = candles.findIndex((candidate) => candidate.time === item.time);
+          {candles.map((candle, index) => {
+            const volume = candle.volumeTo ?? candle.volumeFrom ?? 0;
+            const barHeight = (volume / maxVolume) * volumeHeight;
+            const barY = volumeTop + volumeHeight - barHeight;
+            const cx = x(index);
+            const widthValue = Math.max(1.2, candleBodyWidth);
+            const className = candle.close >= candle.open ? "tv-volume-up" : "tv-volume-down";
 
             return (
-              <text
-                key={item.time}
-                x={x(originalIndex) - 16}
-                y={priceAreaBottom + 18}
-                fill="#94a3b8"
-                fontSize="11"
-              >
-                {new Date(item.time * 1000).toLocaleDateString("ru-RU", {
-                  day: "2-digit",
-                  month: "2-digit"
-                })}
-              </text>
+              <rect
+                key={`vol-${candle.time}`}
+                x={cx - widthValue / 2}
+                y={barY}
+                width={widthValue}
+                height={barHeight}
+                className={className}
+              />
             );
           })}
 
           {activeIndicators.rsi ? (
             <>
-              <rect
-                x={left}
-                y={rsiTop}
-                width={chartWidth}
-                height={rsiHeight}
-                rx="12"
-                fill="#fafcff"
-                stroke="#e6edf8"
-              />
-              <line
-                x1={left}
-                y1={lineY(70, 0, 100, rsiTop, rsiHeight)}
-                x2={left + chartWidth}
-                y2={lineY(70, 0, 100, rsiTop, rsiHeight)}
-                stroke="#fecaca"
-                strokeDasharray="4 4"
-              />
-              <line
-                x1={left}
-                y1={lineY(30, 0, 100, rsiTop, rsiHeight)}
-                x2={left + chartWidth}
-                y2={lineY(30, 0, 100, rsiTop, rsiHeight)}
-                stroke="#bfdbfe"
-                strokeDasharray="4 4"
-              />
-              {rsiPoints ? (
-                <polyline fill="none" stroke="#7c3aed" strokeWidth="2" points={rsiPoints} />
-              ) : null}
-              <text x={left + 8} y={rsiTop + 16} fill="#64748b" fontSize="12">
-                RSI 14
-              </text>
+              <rect x={left} y={rsiTop} width={chartWidth} height={rsiHeight} className="tv-pane-box" />
+              <line x1={left} y1={lineY(70, 0, 100, rsiTop, rsiHeight)} x2={width - right} y2={lineY(70, 0, 100, rsiTop, rsiHeight)} className="tv-pane-guide danger" />
+              <line x1={left} y1={lineY(30, 0, 100, rsiTop, rsiHeight)} x2={width - right} y2={lineY(30, 0, 100, rsiTop, rsiHeight)} className="tv-pane-guide info" />
+              {rsiPoints ? <polyline fill="none" className="tv-line-rsi" strokeWidth="1.4" points={rsiPoints} /> : null}
             </>
           ) : null}
 
           {activeIndicators.macd ? (
             <>
-              <rect
-                x={left}
-                y={macdTop}
-                width={chartWidth}
-                height={macdHeight}
-                rx="12"
-                fill="#fafcff"
-                stroke="#e6edf8"
-              />
-              <line
-                x1={left}
-                y1={lineY(0, minMacd, maxMacd, macdTop, macdHeight)}
-                x2={left + chartWidth}
-                y2={lineY(0, minMacd, maxMacd, macdTop, macdHeight)}
-                stroke="#cbd5e1"
-                strokeDasharray="4 4"
-              />
+              <rect x={left} y={macdTop} width={chartWidth} height={macdHeight} className="tv-pane-box" />
+              <line x1={left} y1={lineY(0, minMacd, maxMacd, macdTop, macdHeight)} x2={width - right} y2={lineY(0, minMacd, maxMacd, macdTop, macdHeight)} className="tv-pane-guide" />
 
               {candles.map((_, index) => {
                 const value = macd.histogram[index];
@@ -681,36 +712,102 @@ function TradingChart({
 
                 const zeroY = lineY(0, minMacd, maxMacd, macdTop, macdHeight);
                 const valueY = lineY(value, minMacd, maxMacd, macdTop, macdHeight);
-                const barHeight = Math.max(1.5, Math.abs(valueY - zeroY));
                 const y = value >= 0 ? valueY : zeroY;
+                const height = Math.max(1.2, Math.abs(valueY - zeroY));
 
                 return (
                   <rect
                     key={`macd-${index}`}
-                    x={x(index) - Math.max(1.5, candleBodyWidth / 4)}
+                    x={x(index) - Math.max(1.2, candleBodyWidth / 2)}
                     y={y}
-                    width={Math.max(3, candleBodyWidth / 2)}
-                    height={barHeight}
-                    fill={value >= 0 ? "#86efac" : "#fca5a5"}
+                    width={Math.max(1.8, candleBodyWidth)}
+                    height={height}
+                    className={value >= 0 ? "tv-macd-pos" : "tv-macd-neg"}
                   />
                 );
               })}
 
-              {macdPoints ? (
-                <polyline fill="none" stroke="#2563eb" strokeWidth="2" points={macdPoints} />
-              ) : null}
-
-              {macdSignalPoints ? (
-                <polyline fill="none" stroke="#f59e0b" strokeWidth="2" points={macdSignalPoints} />
-              ) : null}
-
-              <text x={left + 8} y={macdTop + 16} fill="#64748b" fontSize="12">
-                MACD
-              </text>
+              {macdPoints ? <polyline fill="none" className="tv-line-macd" strokeWidth="1.3" points={macdPoints} /> : null}
+              {macdSignalPoints ? <polyline fill="none" className="tv-line-macd-signal" strokeWidth="1.3" points={macdSignalPoints} /> : null}
             </>
           ) : null}
+
+          <line
+            x1={x(hoveredIndex)}
+            y1={top}
+            x2={x(hoveredIndex)}
+            y2={totalHeight - 18}
+            className="tv-crosshair"
+          />
+
+          <line
+            x1={left}
+            y1={lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight)}
+            x2={width - right}
+            y2={lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight)}
+            className="tv-crosshair"
+          />
         </svg>
       </div>
+
+      <details className="indicator-accordion">
+        <summary>Индикаторы и уровни</summary>
+
+        <div className="indicator-grid">
+          {INDICATORS.map((indicator) => {
+            const enabled = activeIndicators[indicator.key];
+
+            return (
+              <button
+                key={indicator.key}
+                type="button"
+                className={enabled ? "indicator-toggle active" : "indicator-toggle"}
+                onClick={() =>
+                  window.requestAnimationFrame(() => {
+                    const button = document.activeElement as HTMLElement | null;
+                    button?.blur();
+                  }) || null
+                }
+              >
+                <span className="indicator-check" />
+                <span>{indicator.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="indicator-grid compact">
+          {INDICATORS.map((indicator) => {
+            const enabled = activeIndicators[indicator.key];
+
+            return (
+              <button
+                key={`switch-${indicator.key}`}
+                type="button"
+                className={enabled ? "indicator-toggle active" : "indicator-toggle"}
+                onClick={() => {
+                  const event = new CustomEvent("toggle-indicator", { detail: indicator.key });
+                  window.dispatchEvent(event);
+                }}
+              >
+                <span className="indicator-check" />
+                <span>{indicator.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="indicator-stats-grid">
+          {indicatorStats.map((item) => (
+            <div key={item.label} className="indicator-stat-card">
+              <span>{item.label}</span>
+              <strong>{item.label.includes("EMA") || item.label.includes("Entry") || item.label.includes("Resistance")
+                ? formatPrice(item.value ?? null)
+                : formatNumber(item.value ?? null)}</strong>
+            </div>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
@@ -724,6 +821,7 @@ export default function DashboardClient({
   initialDetail,
   detailError: initialDetailError
 }: Props) {
+  const [buyMode, setBuyMode] = useState<BuyMode>("soft");
   const [dashboard, setDashboard] = useState<DashboardData | null>(initialDashboard);
   const [markets, setMarkets] = useState<MarketsResponse | null>(initialMarkets);
   const [selectedSymbolSeed, setSelectedSymbolSeed] = useState(initialSelectedSymbol || "BTC");
@@ -737,6 +835,7 @@ export default function DashboardClient({
   const [loaderMessage, setLoaderMessage] = useState(
     "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
   );
+  const [indicatorsOpen, setIndicatorsOpen] = useState(false);
 
   const {
     selectedSymbol,
@@ -753,15 +852,32 @@ export default function DashboardClient({
   const [sideLoading, setSideLoading] = useState(false);
   const [sideError, setSideError] = useState<string | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<Record<IndicatorKey, boolean>>({
-    ema20: true,
-    ema50: true,
-    rsi: true,
-    macd: true,
-    range: true,
-    supports: true,
-    tradePlan: true,
-    confirmation: true
+    ema20: false,
+    ema50: false,
+    rsi: false,
+    macd: false,
+    range: false,
+    supports: false,
+    tradePlan: false,
+    confirmation: false
   });
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<IndicatorKey>;
+      const key = customEvent.detail;
+      setActiveIndicators((current) => ({
+        ...current,
+        [key]: !current[key]
+      }));
+      setIndicatorsOpen(true);
+    };
+
+    window.addEventListener("toggle-indicator", handler as EventListener);
+    return () => {
+      window.removeEventListener("toggle-indicator", handler as EventListener);
+    };
+  }, []);
 
   const buySymbols = useMemo(
     () => new Set((dashboard?.topBuys ?? []).map((item) => item.symbol)),
@@ -789,24 +905,19 @@ export default function DashboardClient({
     let cancelled = false;
 
     async function bootstrap() {
-      if (initialDashboard && initialMarkets && initialDetail) {
-        setBootstrapLoading(false);
-        return;
-      }
-
       setBootstrapLoading(true);
       setBootstrapError(null);
-      setLoaderMessage("Ждём, пока backend положит BUY-сигналы в кеш.");
+      setLoaderMessage(`Ждём, пока backend положит BUY-сигналы (${buyMode}) в кеш.`);
 
       try {
-        await waitUntilBuySignalsCacheReady();
+        await waitUntilBuySignalsCacheReady(buyMode);
 
         if (cancelled) return;
 
-        setLoaderMessage("Кеш готов. Загружаем dashboard, список рынка и карточку выбранной пары.");
+        setLoaderMessage("Кеш готов. Загружаем dashboard, рынок и выбранную пару.");
 
         const [dashboardResponse, marketsResponse] = await Promise.all([
-          getDashboardData(),
+          getDashboardData(buyMode),
           getMarkets(30)
         ]);
 
@@ -823,27 +934,15 @@ export default function DashboardClient({
           "BTC";
 
         setSelectedSymbolSeed(nextSymbol);
+        setSelectedSymbol(nextSymbol);
 
-        try {
-          const detailResponse = await getMarketDetail(nextSymbol);
+        const detailResponse = await getMarketDetail(nextSymbol);
 
-          if (cancelled) return;
-
-          setDetailSeed(detailResponse);
-        } catch (error) {
-          if (cancelled) return;
-
-          setDetailSeed(null);
-          setBootstrapError(
-            error instanceof Error ? error.message : "Не удалось загрузить данные по выбранной паре"
-          );
-        }
+        if (cancelled) return;
+        setDetailSeed(detailResponse);
       } catch (error) {
         if (cancelled) return;
-
-        setBootstrapError(
-          error instanceof Error ? error.message : "Не удалось загрузить dashboard"
-        );
+        setBootstrapError(error instanceof Error ? error.message : "Не удалось загрузить dashboard");
       } finally {
         if (!cancelled) {
           setBootstrapLoading(false);
@@ -856,7 +955,7 @@ export default function DashboardClient({
     return () => {
       cancelled = true;
     };
-  }, [initialDashboard, initialDetail, initialMarkets, initialSelectedSymbol]);
+  }, [buyMode, initialSelectedSymbol, setSelectedSymbol]);
 
   async function handleLoadInfo() {
     setPanelMode("info");
@@ -894,14 +993,14 @@ export default function DashboardClient({
     setBootstrapError(null);
     setBootstrapLoading(true);
     setLoaderMessage(
-      "Принудительно обновляем кеш BUY-сигналов по кнопке «Получить сигналы». Это может занять до минуты."
+      `Принудительно обновляем кеш BUY-сигналов (${buyMode}) по кнопке «Получить сигналы».`
     );
 
     try {
-      await refreshBuySignalsCache();
+      await refreshBuySignalsCache(buyMode);
 
       const [dashboardResponse, marketsResponse] = await Promise.all([
-        getDashboardData(),
+        getDashboardData(buyMode),
         getMarkets(30)
       ]);
 
@@ -960,7 +1059,7 @@ export default function DashboardClient({
       <section className="hero hero-compact">
         <h1 className="page-title">Crypto AI Dashboard</h1>
         <p className="page-subtitle dashboard-subtitle">
-          График пары, сигналы на покупку, полный список рынка и визуализация индикаторов стратегии на одном экране.
+          Темный dashboard в стиле Pionex: крупный график, список рынка, BUY-сигналы и аналитика.
         </p>
       </section>
 
@@ -981,38 +1080,101 @@ export default function DashboardClient({
           </div>
 
           <div className="card dashboard-indicators-card">
-            <h3>Индикаторы</h3>
-
-            <div className="indicator-grid">
-              {INDICATORS.map((indicator) => {
-                const enabled = activeIndicators[indicator.key];
-
-                return (
-                  <button
-                    key={indicator.key}
-                    type="button"
-                    className={enabled ? "indicator-toggle active" : "indicator-toggle"}
-                    onClick={() =>
-                      setActiveIndicators((current) => ({
-                        ...current,
-                        [indicator.key]: !current[indicator.key]
-                      }))
-                    }
-                  >
-                    <span className="indicator-check" />
-                    <span>{indicator.label}</span>
-                  </button>
-                );
-              })}
+            <div className="list-title-row">
+              <h3>Индикаторы</h3>
+              <button
+                type="button"
+                className="collapse-button"
+                onClick={() => setIndicatorsOpen((value) => !value)}
+              >
+                {indicatorsOpen ? "Скрыть" : "Показать"}
+              </button>
             </div>
+
+            {indicatorsOpen ? (
+              <>
+                <div className="indicator-grid">
+                  {INDICATORS.map((indicator) => {
+                    const enabled = activeIndicators[indicator.key];
+
+                    return (
+                      <button
+                        key={indicator.key}
+                        type="button"
+                        className={enabled ? "indicator-toggle active" : "indicator-toggle"}
+                        onClick={() =>
+                          setActiveIndicators((current) => ({
+                            ...current,
+                            [indicator.key]: !current[indicator.key]
+                          }))
+                        }
+                      >
+                        <span className="indicator-check" />
+                        <span>{indicator.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {detail ? (
+                  <div className="indicator-stats-grid">
+                    <div className="indicator-stat-card">
+                      <span>EMA 20</span>
+                      <strong>{formatPrice(detail.market.technicals.ema20)}</strong>
+                    </div>
+                    <div className="indicator-stat-card">
+                      <span>EMA 50</span>
+                      <strong>{formatPrice(detail.market.technicals.ema50)}</strong>
+                    </div>
+                    <div className="indicator-stat-card">
+                      <span>RSI 14</span>
+                      <strong>{formatNumber(detail.market.technicals.rsi14)}</strong>
+                    </div>
+                    <div className="indicator-stat-card">
+                      <span>MACD</span>
+                      <strong>{formatNumber(detail.market.technicals.macdLine, 4)}</strong>
+                    </div>
+                    <div className="indicator-stat-card">
+                      <span>Support</span>
+                      <strong>{formatPrice(detail.signal.nearestSupport)}</strong>
+                    </div>
+                    <div className="indicator-stat-card">
+                      <span>Resistance</span>
+                      <strong>{formatPrice(detail.signal.nearestResistance)}</strong>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
 
         <div className="dashboard-middle-stack">
           <div className="card dashboard-list-card dashboard-buy-card">
-            <div className="list-title-row">
-              <h3>Сигналы на покупку</h3>
-              <span className="muted">{dashboard?.topBuys.length ?? 0}</span>
+            <div className="list-title-row buy-signals-head">
+              <div>
+                <h3>Сигналы на покупку</h3>
+                <div className="muted buy-signals-time">
+                  Получены: {formatDateTime(dashboard?.generatedAt ?? null)}
+                </div>
+              </div>
+
+              <div className="mode-switch">
+                <button
+                  type="button"
+                  className={buyMode === "soft" ? "mode-button active" : "mode-button"}
+                  onClick={() => setBuyMode("soft")}
+                >
+                  soft
+                </button>
+                <button
+                  type="button"
+                  className={buyMode === "hard" ? "mode-button active" : "mode-button"}
+                  onClick={() => setBuyMode("hard")}
+                >
+                  hard
+                </button>
+              </div>
             </div>
 
             <div className="signal-list fill-scroll">
@@ -1041,7 +1203,7 @@ export default function DashboardClient({
               ) : (
                 <div className="empty-state">
                   <p>Сейчас в кеше нет BUY-сигналов.</p>
-                  <p>На графике отображается выбранная пара из полного списка.</p>
+                  <p>Режим расчета: {buyMode}.</p>
                 </div>
               )}
             </div>

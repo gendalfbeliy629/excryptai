@@ -12,13 +12,13 @@ type BuyCacheEntry = {
 type BuyCacheStore = {
   entries: Partial<Record<BuyScanMode, BuyCacheEntry>>;
   latestMode: BuyScanMode | null;
-  warmupPromise: Promise<void> | null;
+  warmupPromises: Partial<Record<BuyScanMode, Promise<void> | null>>;
 };
 
 const buyCacheStore: BuyCacheStore = {
   entries: {},
   latestMode: null,
-  warmupPromise: null
+  warmupPromises: {}
 };
 
 function getValidEntry(mode: BuyScanMode): BuyCacheEntry | null {
@@ -54,9 +54,7 @@ export function getSharedBuyScanResult(
 ): BuyScanResult | null {
   if (preferredMode) {
     const preferredEntry = getValidEntry(preferredMode);
-    if (preferredEntry) {
-      return sliceResult(preferredEntry.value, limit);
-    }
+    return preferredEntry ? sliceResult(preferredEntry.value, limit) : null;
   }
 
   const latestMode = buyCacheStore.latestMode;
@@ -67,16 +65,16 @@ export function getSharedBuyScanResult(
     }
   }
 
-  const hardEntry = getValidEntry("hard");
-  if (hardEntry) {
-    buyCacheStore.latestMode = "hard";
-    return sliceResult(hardEntry.value, limit);
-  }
-
   const softEntry = getValidEntry("soft");
   if (softEntry) {
     buyCacheStore.latestMode = "soft";
     return sliceResult(softEntry.value, limit);
+  }
+
+  const hardEntry = getValidEntry("hard");
+  if (hardEntry) {
+    buyCacheStore.latestMode = "hard";
+    return sliceResult(hardEntry.value, limit);
   }
 
   return null;
@@ -98,6 +96,7 @@ export function setSharedBuyScanResult(result: BuyScanResult): void {
 export function clearSharedBuyScanResult(mode?: BuyScanMode): void {
   if (mode) {
     delete buyCacheStore.entries[mode];
+    delete buyCacheStore.warmupPromises[mode];
 
     if (buyCacheStore.latestMode === mode) {
       buyCacheStore.latestMode = null;
@@ -108,26 +107,36 @@ export function clearSharedBuyScanResult(mode?: BuyScanMode): void {
 
   buyCacheStore.entries = {};
   buyCacheStore.latestMode = null;
+  buyCacheStore.warmupPromises = {};
 }
 
-export function getSharedBuyScanStatus() {
-  const latestMode = buyCacheStore.latestMode;
-  const latestEntry = latestMode ? getValidEntry(latestMode) : null;
+export function getSharedBuyScanStatus(mode?: BuyScanMode) {
+  const resolvedMode = mode ?? buyCacheStore.latestMode ?? null;
+  const entry = resolvedMode ? getValidEntry(resolvedMode) : null;
 
   return {
-    hasReadyCache: Boolean(latestEntry),
-    latestMode: latestEntry ? latestMode : null,
-    cacheAgeMs: latestEntry ? Date.now() - latestEntry.cachedAt : null,
-    cacheExpiresInMs: latestEntry ? Math.max(0, latestEntry.expiresAt - Date.now()) : null,
-    warmedAt: latestEntry ? new Date(latestEntry.cachedAt).toISOString() : null,
-    warming: Boolean(buyCacheStore.warmupPromise)
+    hasReadyCache: Boolean(entry),
+    latestMode: entry ? resolvedMode : null,
+    cacheAgeMs: entry ? Date.now() - entry.cachedAt : null,
+    cacheExpiresInMs: entry ? Math.max(0, entry.expiresAt - Date.now()) : null,
+    warmedAt: entry ? new Date(entry.cachedAt).toISOString() : null,
+    warming: mode
+      ? Boolean(buyCacheStore.warmupPromises[mode])
+      : Boolean(buyCacheStore.warmupPromises.soft) || Boolean(buyCacheStore.warmupPromises.hard)
   };
 }
 
-export function getSharedBuyScanWarmupPromise(): Promise<void> | null {
-  return buyCacheStore.warmupPromise;
+export function getSharedBuyScanWarmupPromise(mode: BuyScanMode): Promise<void> | null {
+  return buyCacheStore.warmupPromises[mode] ?? null;
 }
 
-export function setSharedBuyScanWarmupPromise(promise: Promise<void> | null): void {
-  buyCacheStore.warmupPromise = promise;
+export function setSharedBuyScanWarmupPromise(
+  mode: BuyScanMode,
+  promise: Promise<void> | null
+): void {
+  if (promise) {
+    buyCacheStore.warmupPromises[mode] = promise;
+  } else {
+    delete buyCacheStore.warmupPromises[mode];
+  }
 }

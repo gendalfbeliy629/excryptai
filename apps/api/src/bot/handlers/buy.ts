@@ -184,8 +184,11 @@ function buildBuyCard(item: BuyCandidate): string {
 
 function parseBuyMode(text: string): BuyScanMode {
   const normalized = text.trim().toLowerCase();
-  if (normalized === "/buy soft") return "soft";
-  return "hard";
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  const rawMode = (parts[1] || "soft").split("@")[0];
+
+  if (rawMode === "hard") return "hard";
+  return "soft";
 }
 
 export function registerBuyHandler(bot: Telegraf) {

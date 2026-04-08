@@ -4,10 +4,9 @@ import { getBot } from "./bot/bot";
 import {
   buildMarketContext,
   getCoinInfo,
-  getCandles,
   parseMarketPair
 } from "./services/market.service";
-import { evaluateMarketSignal } from "./services/signal.service";
+import { evaluateMarketSignal, BuyScanMode } from "./services/signal.service";
 import { getBuyScanResult, type BuyScanResult } from "./services/buy.service";
 import { getAssetInfo } from "./services/info.service";
 import { askAI } from "./services/ai.service";
@@ -19,6 +18,7 @@ import {
   setSharedBuyScanResult,
   setSharedBuyScanWarmupPromise
 } from "./utils/buy-cache";
+import { getAllPionexSpotTickers } from "./services/pionex.service";
 
 const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -56,6 +56,10 @@ function fail(res: Response, error: unknown, status = 500) {
   });
 }
 
+function parseMode(value: unknown): BuyScanMode {
+  return String(value || "soft").toLowerCase() === "hard" ? "hard" : "soft";
+}
+
 async function mapWithConcurrency<TInput, TOutput>(
   items: TInput[],
   concurrency: number,
@@ -89,15 +93,16 @@ type MarketListItem = {
   rsi14: number | null;
   signal: "BUY" | "HOLD" | "SELL";
   score: number;
+  volume24h: number;
 };
 
 async function warmBuySignalsCache(options?: {
   force?: boolean;
-  mode?: "hard" | "soft";
+  mode?: BuyScanMode;
   limit?: number;
 }): Promise<void> {
   const force = options?.force ?? false;
-  const mode = options?.mode ?? "hard";
+  const mode = options?.mode ?? "soft";
   const limit = Math.max(10, options?.limit ?? 10);
 
   if (!force) {
@@ -107,7 +112,7 @@ async function warmBuySignalsCache(options?: {
     }
   }
 
-  const currentWarmupPromise = getSharedBuyScanWarmupPromise();
+  const currentWarmupPromise = getSharedBuyScanWarmupPromise(mode);
   if (currentWarmupPromise) {
     return currentWarmupPromise;
   }
@@ -117,33 +122,43 @@ async function warmBuySignalsCache(options?: {
       const result = await getBuyScanResult(limit, mode);
       setSharedBuyScanResult(result);
     } finally {
-      setSharedBuyScanWarmupPromise(null);
+      setSharedBuyScanWarmupPromise(mode, null);
     }
   })();
 
-  setSharedBuyScanWarmupPromise(nextWarmupPromise);
+  setSharedBuyScanWarmupPromise(mode, nextWarmupPromise);
 
   return nextWarmupPromise;
 }
 
-async function getDashboardBuyScanResult(limit = 5): Promise<BuyScanResult> {
-  const cached = getSharedBuyScanResult(limit, "hard");
+async function warmAllModes(limit = 10, force = true): Promise<void> {
+  await Promise.all([
+    warmBuySignalsCache({ force, mode: "soft", limit }),
+    warmBuySignalsCache({ force, mode: "hard", limit })
+  ]);
+}
+
+async function getDashboardBuyScanResult(
+  limit = 5,
+  mode: BuyScanMode = "soft"
+): Promise<BuyScanResult> {
+  const cached = getSharedBuyScanResult(limit, mode);
   if (cached) {
     return cached;
   }
 
   await warmBuySignalsCache({
     force: false,
-    mode: "hard",
+    mode,
     limit: Math.max(limit, 10)
   });
 
-  const warmed = getSharedBuyScanResult(limit, "hard");
+  const warmed = getSharedBuyScanResult(limit, mode);
   if (warmed) {
     return warmed;
   }
 
-  const result = await getBuyScanResult(Math.max(limit, 10), "hard");
+  const result = await getBuyScanResult(Math.max(limit, 10), mode);
   setSharedBuyScanResult(result);
 
   return {
@@ -152,7 +167,7 @@ async function getDashboardBuyScanResult(limit = 5): Promise<BuyScanResult> {
   };
 }
 
-async function buildMarketListItem(symbol: string): Promise<MarketListItem | null> {
+async function buildMarketListItem(symbol: string, volume24h = 0): Promise<MarketListItem | null> {
   try {
     const market = await buildMarketContext(symbol, "USDT");
     const evaluation = evaluateMarketSignal(market);
@@ -168,7 +183,8 @@ async function buildMarketListItem(symbol: string): Promise<MarketListItem | nul
         trend30d: market.technicals.trend30d,
         rsi14: market.technicals.rsi14,
         signal: "HOLD",
-        score: 0
+        score: 0,
+        volume24h
       };
     }
 
@@ -182,7 +198,8 @@ async function buildMarketListItem(symbol: string): Promise<MarketListItem | nul
       trend30d: market.technicals.trend30d,
       rsi14: market.technicals.rsi14,
       signal: evaluation.signal,
-      score: evaluation.score
+      score: evaluation.score,
+      volume24h
     };
   } catch (error) {
     console.error(`Failed to build market list item for ${symbol}:`, error);
@@ -200,12 +217,11 @@ app.get("/", (_req, res) => {
     endpoints: [
       "/health",
       "/api/health",
-      "/api/dashboard/bootstrap-status",
-      "/api/dashboard/refresh-cache",
-      "/api/dashboard",
+      "/api/dashboard/bootstrap-status?mode=soft|hard",
+      "/api/dashboard/refresh-cache?mode=soft|hard",
+      "/api/dashboard?mode=soft|hard",
       "/api/markets",
       "/api/markets/:symbol",
-      "/api/markets/:symbol/candles",
       "/api/info/:symbol",
       "/api/ai/:symbol"
     ]
@@ -232,13 +248,14 @@ app.get("/api/symbols", (_req, res) => {
   return ok(res, ALL_SYMBOLS);
 });
 
-app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
+app.get("/api/dashboard/bootstrap-status", async (req, res) => {
   try {
-    const cached = getSharedBuyScanResult(5, "hard");
-    const cacheStatus = getSharedBuyScanStatus();
+    const mode = parseMode(req.query.mode);
+    const cached = getSharedBuyScanResult(5, mode);
+    const cacheStatus = getSharedBuyScanStatus(mode);
 
-    if (!cached && !getSharedBuyScanWarmupPromise()) {
-      void warmBuySignalsCache({ force: false, mode: "hard", limit: 10 }).catch((error) => {
+    if (!cached && !getSharedBuyScanWarmupPromise(mode)) {
+      void warmBuySignalsCache({ force: false, mode, limit: 10 }).catch((error) => {
         console.error("Buy signal warmup failed:", error);
       });
     }
@@ -256,15 +273,17 @@ app.get("/api/dashboard/bootstrap-status", async (_req, res) => {
   }
 });
 
-app.get("/api/dashboard/refresh-cache", async (_req, res) => {
+app.get("/api/dashboard/refresh-cache", async (req, res) => {
   try {
+    const mode = parseMode(req.query.mode);
+
     await warmBuySignalsCache({
       force: true,
-      mode: "hard",
+      mode,
       limit: 10
     });
 
-    const cacheStatus = getSharedBuyScanStatus();
+    const cacheStatus = getSharedBuyScanStatus(mode);
 
     return ok(res, {
       buySignalsCacheReady: cacheStatus.hasReadyCache,
@@ -280,21 +299,31 @@ app.get("/api/dashboard/refresh-cache", async (_req, res) => {
   }
 });
 
-app.get("/api/dashboard", async (_req, res) => {
+app.get("/api/dashboard", async (req, res) => {
   try {
-    const [featuredRaw, buys] = await Promise.all([
-      mapWithConcurrency(DASHBOARD_SYMBOLS, 3, buildMarketListItem),
-      getDashboardBuyScanResult(5)
-    ]);
+    const mode = parseMode(req.query.mode);
+    const tickers = await getAllPionexSpotTickers();
 
-    const featured = featuredRaw.filter(
-      (item): item is MarketListItem => item !== null
-    );
+    const featuredRaw = await mapWithConcurrency(DASHBOARD_SYMBOLS, 3, async (symbol) => {
+      const ticker = tickers.find(
+        (item) => item.baseSymbol === symbol && item.quoteSymbol === "USDT"
+      );
+      return buildMarketListItem(symbol, ticker?.amount ?? 0);
+    });
+
+    const buys = await getDashboardBuyScanResult(5, mode);
+    const cacheStatus = getSharedBuyScanStatus(mode);
+
+    const featured = featuredRaw
+      .filter((item): item is MarketListItem => item !== null)
+      .sort((a, b) => b.volume24h - a.volume24h);
 
     return ok(res, {
       featured,
       topBuys: buys.buys,
       summary: buys.summary,
+      generatedAt: cacheStatus.warmedAt,
+      scanMode: mode,
       degraded: featured.length < DASHBOARD_SYMBOLS.length
     });
   } catch (error) {
@@ -306,17 +335,33 @@ app.get("/api/markets", async (req, res) => {
   try {
     const limitRaw = String(req.query.limit || "30");
     const limit = Math.max(1, Math.min(Number(limitRaw) || 30, ALL_SYMBOLS.length));
-    const symbols = ALL_SYMBOLS.slice(0, limit);
 
-    const itemsRaw = await mapWithConcurrency(symbols, 3, buildMarketListItem);
-    const items = itemsRaw.filter((item): item is MarketListItem => item !== null);
+    const tickers = await getAllPionexSpotTickers();
 
-    items.sort((a, b) => b.score - a.score);
+    const sortedSymbols = tickers
+      .filter((item) => item.quoteSymbol === "USDT")
+      .sort((a, b) => b.amount - a.amount)
+      .map((item) => item.baseSymbol)
+      .filter(
+        (symbol, index, arr) => arr.indexOf(symbol) === index && ALL_SYMBOLS.includes(symbol)
+      )
+      .slice(0, limit);
+
+    const itemsRaw = await mapWithConcurrency(sortedSymbols, 3, async (symbol) => {
+      const ticker = tickers.find(
+        (item) => item.baseSymbol === symbol && item.quoteSymbol === "USDT"
+      );
+      return buildMarketListItem(symbol, ticker?.amount ?? 0);
+    });
+
+    const items = itemsRaw
+      .filter((item): item is MarketListItem => item !== null)
+      .sort((a, b) => b.volume24h - a.volume24h);
 
     return ok(res, {
       items,
       total: items.length,
-      degraded: items.length < symbols.length
+      degraded: items.length < sortedSymbols.length
     });
   } catch (error) {
     return fail(res, error);
@@ -393,21 +438,6 @@ app.get("/api/markets/:symbol", async (req, res) => {
   }
 });
 
-app.get("/api/markets/:symbol/candles", async (req, res) => {
-  try {
-    const symbol = normalizeSymbol(String(req.params.symbol || ""));
-    const limit = Math.max(7, Math.min(Number(req.query.limit || 30) || 30, 90));
-    const candles = await getCandles(symbol, limit, "USDT");
-
-    return ok(res, {
-      symbol,
-      candles
-    });
-  } catch (error) {
-    return fail(res, error, 400);
-  }
-});
-
 app.get("/api/info/:symbol", async (req, res) => {
   try {
     const rawSymbol = String(req.params.symbol || "BTC");
@@ -459,22 +489,14 @@ const server = app.listen(env.PORT, env.HOST, () => {
 });
 
 const refreshTimer = setInterval(() => {
-  void warmBuySignalsCache({
-    force: true,
-    mode: "hard",
-    limit: 10
-  }).catch((error) => {
+  void warmAllModes(10, true).catch((error) => {
     console.error("Scheduled buy signal refresh failed:", error);
   });
 }, BUY_CACHE_REFRESH_INTERVAL_MS);
 
 refreshTimer.unref?.();
 
-void warmBuySignalsCache({
-  force: true,
-  mode: "hard",
-  limit: 10
-}).catch((error) => {
+void warmAllModes(10, true).catch((error) => {
   console.error("Initial buy signal warmup failed:", error);
 });
 
@@ -488,25 +510,26 @@ let launchedBot: ReturnType<typeof getBot> | null = null;
 
   try {
     launchedBot = getBot();
-
-    const me = await launchedBot.telegram.getMe();
-    console.log(`Bot authorized: @${me.username}`);
-
-    await launchedBot.launch();
+    await launchedBot.telegram.getMe();
     console.log("Telegram bot started");
   } catch (error) {
-    console.error("Bot error:", error);
+    console.error("Telegram bot launch failed:", error);
   }
 })();
 
-process.once("SIGINT", () => {
-  clearInterval(refreshTimer);
-  launchedBot?.stop("SIGINT");
-  server.close();
-});
+const shutdown = async () => {
+  try {
+    if (launchedBot) {
+      await launchedBot.stop();
+    }
+  } catch (error) {
+    console.error("Bot shutdown failed:", error);
+  }
 
-process.once("SIGTERM", () => {
-  clearInterval(refreshTimer);
-  launchedBot?.stop("SIGTERM");
-  server.close();
-});
+  server.close(() => {
+    process.exit(0);
+  });
+};
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
