@@ -74,19 +74,23 @@ function normalizeTextBlock(text: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+function padDatePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
 function formatDateTime(value: string | number | null | undefined): string {
   if (!value) return "—";
 
   const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
-  return date.toLocaleString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const day = padDatePart(date.getDate());
+  const month = padDatePart(date.getMonth() + 1);
+  const year = padDatePart(date.getFullYear() % 100);
+  const hours = padDatePart(date.getHours());
+  const minutes = padDatePart(date.getMinutes());
+
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
 }
 
 function formatAxisTime(value: string | number | null | undefined, interval: ChartInterval): string {
@@ -95,19 +99,17 @@ function formatAxisTime(value: string | number | null | undefined, interval: Cha
   const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
+  const day = padDatePart(date.getDate());
+  const month = padDatePart(date.getMonth() + 1);
+  const year = padDatePart(date.getFullYear() % 100);
+  const hours = padDatePart(date.getHours());
+  const minutes = padDatePart(date.getMinutes());
+
   if (interval === "1D") {
-    return date.toLocaleDateString("ru-RU", {
-      day: "2-digit",
-      month: "2-digit"
-    });
+    return `${day}.${month}.${year}`;
   }
 
-  return date.toLocaleString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
 }
 
 function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData | null): string[] {
@@ -645,7 +647,7 @@ function TradingChart({
         </div>
       </div>
 
-      <div className={`tv-hover-card ${hoveredCandleToneClass}`}>
+      <div className="tv-hover-card">
         <span className="tv-hover-date">{formatDateTime(hoveredCandle?.time)}</span>
         <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>O {formatPrice(hoveredCandle?.open ?? null)}</span>
         <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>H {formatPrice(hoveredCandle?.high ?? null)}</span>

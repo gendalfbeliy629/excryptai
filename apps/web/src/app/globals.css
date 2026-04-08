@@ -575,19 +575,18 @@ button {
   background: #0f1621;
   color: #c7d4ea;
   font-size: 12px;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
-.tv-hover-card.positive {
+.tv-hover-date {
+  color: #c7d4ea;
+}
+
+.tv-hover-ohlc.positive {
   color: #8df0cb;
-  border-color: rgba(0, 192, 135, 0.48);
-  background: rgba(0, 192, 135, 0.08);
 }
 
-.tv-hover-card.negative {
+.tv-hover-ohlc.negative {
   color: #ff9f9f;
-  border-color: rgba(255, 91, 91, 0.48);
-  background: rgba(255, 91, 91, 0.08);
 }
 
 .tv-hover-hint {
@@ -629,7 +628,7 @@ button {
 
 .tv-axis-label {
   fill: #7f95b5;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .tv-time-axis-label {
@@ -753,7 +752,7 @@ button {
 
 .tv-axis-box-text {
   fill: #e7efff;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
 }
 
