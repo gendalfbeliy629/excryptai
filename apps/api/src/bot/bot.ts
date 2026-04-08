@@ -2,7 +2,6 @@ import { Telegraf } from "telegraf";
 import { env } from "../config/env";
 import { registerStartHandler } from "./handlers/start";
 import { registerPriceHandler } from "./handlers/price";
-import { registerAIHandler } from "./handlers/ai";
 import { registerBuyHandler } from "./handlers/buy";
 import { registerInfoHandler } from "./handlers/info";
 import { rememberTelegramSubscriber } from "../utils/telegram-subscribers";
@@ -36,9 +35,20 @@ export function getBot(): Telegraf {
 
   registerStartHandler(bot);
   registerPriceHandler(bot);
-  registerAIHandler(bot);
   registerBuyHandler(bot);
   registerInfoHandler(bot);
+
+  void bot.telegram
+    .setMyCommands([
+      { command: "start", description: "Запуск и список доступных команд" },
+      { command: "price", description: "Цена и метрики по паре" },
+      { command: "info", description: "Краткая справка по монете" },
+      { command: "ai", description: "AI-анализ пары" },
+      { command: "buy", description: "BUY-сигналы по рынку" }
+    ])
+    .catch((error) => {
+      console.error("Failed to register Telegram bot commands:", error);
+    });
 
   botInstance = bot;
   return botInstance;

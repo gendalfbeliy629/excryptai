@@ -1126,13 +1126,16 @@ export default function DashboardClient({
         <div className="dashboard-right-stack">
           <div className="card dashboard-summary-card">
             <div className="list-title-row summary-head">
-              <h3>
-                {panelMode === "summary"
-                  ? "Информация"
-                  : panelMode === "info"
-                    ? "Справка"
-                    : "Аналитика"}
-              </h3>
+              <div className="summary-title-block">
+                <h3>Информация</h3>
+                <div className="summary-section-caption">
+                  {panelMode === "summary"
+                    ? "Сводка по выбранной паре"
+                    : panelMode === "info"
+                      ? "Помощь"
+                      : "Аналитика"}
+                </div>
+              </div>
 
               {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
             </div>
@@ -1192,7 +1195,7 @@ export default function DashboardClient({
               className={panelMode === "info" ? "action-button active" : "action-button"}
               onClick={handleLoadInfo}
             >
-              Справка
+              Помощь
             </button>
 
             <button

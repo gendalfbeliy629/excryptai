@@ -22,10 +22,6 @@ export default function RootLayout({
               <Link className="brand" href="/dashboard">
                 crypto-<span>ai</span>
               </Link>
-
-              <nav className="nav">
-                <Link href="/dashboard">Dashboard</Link>
-              </nav>
             </div>
           </header>
 
