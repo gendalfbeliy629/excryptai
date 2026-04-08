@@ -165,6 +165,19 @@ function buildManagementLines(
       ];
 }
 
+function buildNoBuySignalLines(
+  dashboard: DashboardData | null,
+  buyMode: BuyMode
+): string[] {
+  const explanation = dashboard?.summary.explanation?.trim();
+
+  return [
+    `Сейчас покупать нечего в режиме /buy ${buyMode}.`,
+    explanation ? `Что происходит на рынке: ${explanation}` : "Что происходит на рынке: BUY-кандидаты пока не проходят фильтры.",
+    dashboard?.generatedAt ? `Обновление кеша: ${formatDateTime(dashboard.generatedAt)}` : null
+  ].filter((item): item is string => Boolean(item));
+}
+
 function buildBuySignalLines(item: DashboardData["topBuys"][number]): string[] {
   return [
     `${item.rank}. ${item.pair} — BUY`,
@@ -1106,8 +1119,9 @@ export default function DashboardClient({
                 })
               ) : (
                 <div className="empty-state">
-                  <p>Сейчас в кеше нет BUY-сигналов.</p>
-                  <p>Режим расчета: {buyMode}.</p>
+                  {buildNoBuySignalLines(dashboard, buyMode).map((line, index) => (
+                    <p key={`no-buy-${index}`}>{line}</p>
+                  ))}
                 </div>
               )}
             </div>

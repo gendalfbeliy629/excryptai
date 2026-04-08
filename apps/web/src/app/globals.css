@@ -205,7 +205,7 @@ button {
 
 .dashboard-middle-stack {
   display: grid;
-  grid-template-rows: minmax(0, 30%) minmax(0, 70%);
+  grid-template-rows: minmax(0, 40%) minmax(0, 60%);
   gap: 6px;
 }
 
@@ -365,6 +365,12 @@ button {
 .dashboard-buy-card,
 .dashboard-full-card {
   min-height: 0;
+}
+
+.dashboard-indicators-card,
+.dashboard-full-card,
+.dashboard-actions {
+  margin-bottom: 10px;
 }
 
 .signal-list {
