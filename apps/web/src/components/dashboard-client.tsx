@@ -45,8 +45,8 @@ type IndicatorKey =
 
 type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
-type ChartInterval = "1H" | "4H" | "1D";
-type ChartWindow = "1D" | "1W" | "1Y";
+type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
+type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 
 const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "ema20", label: "EMA 20" },
@@ -114,7 +114,7 @@ function formatAxisTime(value: string | number | null | undefined, interval: Cha
   const hours = padDatePart(date.getHours());
   const minutes = padDatePart(date.getMinutes());
 
-  if (interval === "1D") {
+  if (interval === "1D" || interval === "1W" || interval === "1M") {
     return `${day}.${month}.${year}`;
   }
 
@@ -251,6 +251,41 @@ function calculateRSI(values: number[], period = 14): Array<number | null> {
   return result;
 }
 
+function aggregateCandles(candles: Candle[], bucketSize: number): Candle[] {
+  if (!candles.length || bucketSize <= 1) return candles;
+
+  const result: Candle[] = [];
+
+  for (let index = 0; index < candles.length; index += bucketSize) {
+    const bucket = candles.slice(index, index + bucketSize);
+    if (!bucket.length) continue;
+
+    result.push({
+      time: bucket[0].time,
+      open: bucket[0].open,
+      high: Math.max(...bucket.map((item) => item.high)),
+      low: Math.min(...bucket.map((item) => item.low)),
+      close: bucket[bucket.length - 1].close,
+      volumeFrom: bucket.reduce((sum, item) => sum + (item.volumeFrom ?? 0), 0),
+      volumeTo: bucket.reduce((sum, item) => sum + (item.volumeTo ?? 0), 0)
+    });
+  }
+
+  return result;
+}
+
+function resolveUtcOffsetLabel(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  const hours = Math.floor(absolute / 60);
+  const minutes = absolute % 60;
+
+  return minutes === 0
+    ? `UTC${sign}${hours}`
+    : `UTC${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 function calculateMACD(values: number[]) {
   const ema12 = calculateEMA(values, 12);
   const ema26 = calculateEMA(values, 26);
@@ -293,33 +328,77 @@ function lineY(value: number, min: number, max: number, top: number, height: num
 function getChartCandles(detail: MarketDetail | null, interval: ChartInterval): Candle[] {
   if (!detail) return [];
 
-  if (interval === "1H") {
-    return detail.market.technicals.intraday1h?.candles ?? [];
+  const intraday1h = detail.market.technicals.intraday1h?.candles ?? [];
+  const intraday4h = detail.market.technicals.intraday4h?.candles ?? [];
+  const daily = detail.market.technicals.candles ?? [];
+
+  if (interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m" || interval === "1H") {
+    return intraday1h;
   }
 
   if (interval === "4H") {
-    return detail.market.technicals.intraday4h?.candles ?? [];
+    return intraday4h;
   }
 
-  return detail.market.technicals.candles ?? [];
+  if (interval === "1W") {
+    return aggregateCandles(daily, 7);
+  }
+
+  if (interval === "1M") {
+    return aggregateCandles(daily, 30);
+  }
+
+  return daily;
+}
+
+function getEffectiveInterval(interval: ChartInterval): ChartInterval {
+  if (interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m") {
+    return "1H";
+  }
+
+  return interval;
 }
 
 function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): number {
-  if (interval === "1H") {
+  const effectiveInterval = getEffectiveInterval(interval);
+
+  if (effectiveInterval === "1H") {
     if (windowValue === "1D") return 24;
-    if (windowValue === "1W") return 140;
-    return 140;
+    if (windowValue === "1W") return 24 * 7;
+    if (windowValue === "1M") return 24 * 30;
+    if (windowValue === "1Y") return 24 * 30;
+    return 24 * 30;
   }
 
-  if (interval === "4H") {
+  if (effectiveInterval === "4H") {
     if (windowValue === "1D") return 6;
     if (windowValue === "1W") return 42;
-    return 140;
+    if (windowValue === "1M") return 180;
+    if (windowValue === "1Y") return 180;
+    return 180;
+  }
+
+  if (effectiveInterval === "1D") {
+    if (windowValue === "1D") return 1;
+    if (windowValue === "1W") return 7;
+    if (windowValue === "1M") return 30;
+    if (windowValue === "1Y") return 365;
+    return 365;
+  }
+
+  if (effectiveInterval === "1W") {
+    if (windowValue === "1D") return 1;
+    if (windowValue === "1W") return 1;
+    if (windowValue === "1M") return 4;
+    if (windowValue === "1Y") return 52;
+    return 260;
   }
 
   if (windowValue === "1D") return 1;
-  if (windowValue === "1W") return 7;
-  return 365;
+  if (windowValue === "1W") return 1;
+  if (windowValue === "1M") return 1;
+  if (windowValue === "1Y") return 12;
+  return 120;
 }
 
 function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSymbol: string) {
@@ -402,11 +481,31 @@ function TradingChart({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [zoomFactor, setZoomFactor] = useState(1);
   const [startIndex, setStartIndex] = useState(0);
+  const [clockText, setClockText] = useState("");
   const svgRef = useRef<SVGSVGElement | null>(null);
 
+  const effectiveInterval = useMemo(() => getEffectiveInterval(interval), [interval]);
   const allCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
   const baseVisibleCount = getWindowCount(interval, windowValue);
 
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      const datePart = new Intl.DateTimeFormat("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(now);
+
+      setClockText(`${datePart} ${resolveUtcOffsetLabel(now)}`);
+    };
+
+    updateClock();
+    const timerId = window.setInterval(updateClock, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -611,14 +710,18 @@ function TradingChart({
   return (
     <div className="chart-shell">
       <div className="tv-topbar">
-        <div className="tv-symbol-group">
-          <div className="tv-symbol">{detail?.market.pair.display ?? "BTC/USDT"}</div>
-          <div className="tv-symbol-price">{formatPrice(detail?.market.spot.priceUsd ?? null)}</div>
-          <div className="tv-symbol-meta">
-            24H {formatPercent(detail?.market.spot.change24h ?? null)} · 30D{" "}
-            {formatPercent(detail?.market.technicals.change30d ?? null)}
+        <div className="tv-topbar-left">
+          <div className="tv-symbol-inline">
+            <span className="tv-symbol">{detail?.market.pair.display ?? "BTC/USDT"}</span>
+            <span className="tv-symbol-price">{formatPrice(detail?.market.spot.priceUsd ?? null)}</span>
+            <span className="tv-symbol-meta">
+              24H {formatPercent(detail?.market.spot.change24h ?? null)} · 30D{" "}
+              {formatPercent(detail?.market.technicals.change30d ?? null)}
+            </span>
           </div>
         </div>
+
+        <div className="tv-clock">{clockText}</div>
 
         <div className="tv-badges">
           <span className={signalClassName(detail?.signal.signal ?? "HOLD")}>
@@ -629,30 +732,37 @@ function TradingChart({
       </div>
 
       <div className="tv-controls">
-        <div className="tv-control-group">
-          {(["1H", "4H", "1D"] as ChartInterval[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={item === interval ? "tv-control active" : "tv-control"}
-              onClick={() => setIntervalValue(item)}
-            >
-              {item}
-            </button>
-          ))}
+        <div className="tv-controls-section">
+          <span className="tv-controls-label">Свеча</span>
+          <div className="tv-control-group">
+            {(["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"] as ChartInterval[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={item === interval ? "tv-control active" : "tv-control"}
+                onClick={() => setIntervalValue(item)}
+                title={item === effectiveInterval ? undefined : `Пока используется агрегация на базе ${effectiveInterval}`}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="tv-control-group">
-          {(["1D", "1W", "1Y"] as ChartWindow[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={item === windowValue ? "tv-control active" : "tv-control"}
-              onClick={() => setWindowValue(item)}
-            >
-              {item}
-            </button>
-          ))}
+        <div className="tv-controls-section tv-controls-section-right">
+          <span className="tv-controls-label">Диапазон</span>
+          <div className="tv-control-group">
+            {(["1D", "1W", "1M", "1Y", "All"] as ChartWindow[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={item === windowValue ? "tv-control active" : "tv-control"}
+                onClick={() => setWindowValue(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -702,13 +812,15 @@ function TradingChart({
               <g key={`time-tick-${tickIndex}`}>
                 <line x1={tickX} y1={top} x2={tickX} y2={chartBottom} className="tv-grid tv-grid-vertical" />
                 <text x={tickX} y={totalHeight - 10} textAnchor="middle" className="tv-axis-label tv-time-axis-label">
-                  {formatAxisTime(candle?.time, interval)}
+                  {formatAxisTime(candle?.time, effectiveInterval)}
                 </text>
               </g>
             );
           })}
 
           <line x1={left} y1={chartBottom} x2={width - right} y2={chartBottom} className="tv-axis-line" />
+
+          <text x={left} y={volumeTop - 6} className="tv-pane-title">Volume</text>
 
           {candles.map((candle, index) => {
             const cx = x(index);
@@ -843,7 +955,7 @@ function TradingChart({
           <g className="tv-axis-box-group">
             <rect x={Math.max(left, Math.min(width - right - 118, x(hoveredIndex) - 59))} y={chartBottom + 6} width={118} height={22} rx={6} className="tv-axis-box" />
             <text x={Math.max(left + 59, Math.min(width - right - 59, x(hoveredIndex)))} y={chartBottom + 21} textAnchor="middle" className="tv-axis-box-text">
-              {formatAxisTime(hoveredCandle.time, interval)}
+              {formatAxisTime(hoveredCandle.time, effectiveInterval)}
             </text>
           </g>
         </svg>
