@@ -396,6 +396,24 @@ function TradingChart({
   const allCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
   const baseVisibleCount = getWindowCount(interval, windowValue);
 
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const preventBrowserZoom = (event: globalThis.WheelEvent) => {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    };
+
+    svg.addEventListener("wheel", preventBrowserZoom, { passive: false });
+
+    return () => {
+      svg.removeEventListener("wheel", preventBrowserZoom);
+    };
+  }, []);
+
   useEffect(() => {
     setZoomFactor(1);
   }, [interval, windowValue, detail?.market.asset.symbol]);
@@ -496,7 +514,7 @@ function TradingChart({
   const hoveredCandle = candles[hoveredIndex];
   const hoveredPriceY = lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight);
   const hoveredCandleToneClass =
-    hoveredCandle.close >= hoveredCandle.open ? "tv-hover-card positive" : "tv-hover-card negative";
+    hoveredCandle.close >= hoveredCandle.open ? "positive" : "negative";
 
   function buildPolyline(
     points: Array<number | null>,
@@ -627,13 +645,12 @@ function TradingChart({
         </div>
       </div>
 
-      <div className={hoveredCandleToneClass}>
-        <span>{formatDateTime(hoveredCandle?.time)}</span>
-        <span>O {formatPrice(hoveredCandle?.open ?? null)}</span>
-        <span>H {formatPrice(hoveredCandle?.high ?? null)}</span>
-        <span>L {formatPrice(hoveredCandle?.low ?? null)}</span>
-        <span>C {formatPrice(hoveredCandle?.close ?? null)}</span>
-        <span className="tv-hover-hint">Ctrl + колесо: zoom · колесо: прокрутка по времени</span>
+      <div className={`tv-hover-card ${hoveredCandleToneClass}`}>
+        <span className="tv-hover-date">{formatDateTime(hoveredCandle?.time)}</span>
+        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>O {formatPrice(hoveredCandle?.open ?? null)}</span>
+        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>H {formatPrice(hoveredCandle?.high ?? null)}</span>
+        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>L {formatPrice(hoveredCandle?.low ?? null)}</span>
+        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>C {formatPrice(hoveredCandle?.close ?? null)}</span>
       </div>
 
       <div className="chart-svg-wrap tradingview-shell">

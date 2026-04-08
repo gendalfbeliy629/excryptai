@@ -410,7 +410,7 @@ button {
 
 .summary-metric span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .summary-metric strong {
@@ -435,7 +435,7 @@ button {
 
 .summary-text-block p {
   margin: 0 0 4px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .summary-gap {
@@ -1020,7 +1020,7 @@ button {
 
 .buy-command-text-block p {
   margin: 0 0 4px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.18;
   color: var(--muted);
   white-space: pre-wrap;
