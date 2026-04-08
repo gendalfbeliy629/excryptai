@@ -556,12 +556,17 @@ button {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
   padding: 6px;
   border-radius: 12px;
   border: 1px solid #243041;
   background: #0f1621;
   color: #c7d4ea;
   font-size: 12px;
+}
+
+.tv-hover-hint {
+  color: #7f95b5;
 }
 
 .chart-svg-wrap {
@@ -593,9 +598,22 @@ button {
   stroke-width: 1;
 }
 
+.tv-grid-vertical {
+  stroke-dasharray: 3 7;
+}
+
 .tv-axis-label {
   fill: #7f95b5;
   font-size: 11px;
+}
+
+.tv-time-axis-label {
+  fill: #7086a6;
+}
+
+.tv-axis-line {
+  stroke: #243041;
+  stroke-width: 1;
 }
 
 .tv-candle-up {
@@ -697,9 +715,21 @@ button {
 }
 
 .tv-crosshair {
-  stroke: rgba(255, 255, 255, 0.18);
+  stroke: rgba(255, 255, 255, 0.34);
   stroke-width: 1;
   stroke-dasharray: 4 4;
+}
+
+.tv-axis-box {
+  fill: rgba(18, 27, 39, 0.96);
+  stroke: rgba(91, 111, 139, 0.9);
+  stroke-width: 1;
+}
+
+.tv-axis-box-text {
+  fill: #e7efff;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .chart-empty {
@@ -768,15 +798,23 @@ button {
 
 .indicator-dropdown-panel {
   margin-top: 4px;
-  border: 1px solid rgba(35, 50, 68, 0.7);
-  background: rgba(15, 22, 33, 0.7);
+  border: 1px solid rgba(35, 50, 68, 0.55);
+  background: rgba(15, 22, 33, 0.6);
   backdrop-filter: blur(2px);
   border-radius: 12px;
   padding: 6px;
 }
 
 .indicators-open {
-  background: rgba(20, 27, 38, 0.7);
+  background: rgba(20, 27, 38, 0.6);
+}
+
+.indicators-open .indicator-dropdown-panel,
+.indicators-open .indicator-grid,
+.indicators-open .indicator-toggle,
+.indicators-open .indicator-stats-grid,
+.indicators-open .indicator-stat-card {
+  opacity: 0.6;
 }
 
 .indicator-stats-grid {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import {
   AiResponse,
   Candle,
@@ -84,6 +84,27 @@ function formatDateTime(value: string | number | null | undefined): string {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatAxisTime(value: string | number | null | undefined, interval: ChartInterval): string {
+  if (!value) return "—";
+
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  if (interval === "1D") {
+    return date.toLocaleDateString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit"
+    });
+  }
+
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
     hour: "2-digit",
     minute: "2-digit"
   });
@@ -368,12 +389,36 @@ function TradingChart({
   const [interval, setIntervalValue] = useState<ChartInterval>("1H");
   const [windowValue, setWindowValue] = useState<ChartWindow>("1W");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [zoomFactor, setZoomFactor] = useState(1);
+  const [startIndex, setStartIndex] = useState(0);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const allCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
-  const visibleCount = getWindowCount(interval, windowValue);
+  const baseVisibleCount = getWindowCount(interval, windowValue);
+
+  useEffect(() => {
+    setZoomFactor(1);
+  }, [interval, windowValue, detail?.market.asset.symbol]);
+
+  const visibleCount = useMemo(() => {
+    if (!allCandles.length) return 0;
+    const rawCount = Math.round(baseVisibleCount / zoomFactor);
+    return Math.max(12, Math.min(allCandles.length, rawCount));
+  }, [allCandles.length, baseVisibleCount, zoomFactor]);
+
+  const maxStartIndex = Math.max(0, allCandles.length - visibleCount);
+
+  useEffect(() => {
+    setStartIndex(maxStartIndex);
+  }, [maxStartIndex, interval, windowValue, detail?.market.asset.symbol]);
+
+  useEffect(() => {
+    setStartIndex((current) => Math.max(0, Math.min(maxStartIndex, current)));
+  }, [maxStartIndex]);
+
   const candles = useMemo(
-    () => allCandles.slice(-Math.min(visibleCount, allCandles.length)),
-    [allCandles, visibleCount]
+    () => allCandles.slice(startIndex, startIndex + visibleCount),
+    [allCandles, startIndex, visibleCount]
   );
 
   const closes = candles.map((item) => item.close);
@@ -385,13 +430,14 @@ function TradingChart({
 
   const width = 1200;
   const left = 18;
-  const right = 80;
+  const right = 86;
   const top = 18;
   const priceHeight = 390;
   const volumeHeight = 90;
   const rsiHeight = activeIndicators.rsi ? 90 : 0;
   const macdHeight = activeIndicators.macd ? 96 : 0;
   const gap = 16;
+  const bottomAxisHeight = 34;
 
   const totalHeight =
     top +
@@ -400,7 +446,7 @@ function TradingChart({
     volumeHeight +
     (rsiHeight ? gap + rsiHeight : 0) +
     (macdHeight ? gap + macdHeight : 0) +
-    22;
+    bottomAxisHeight;
 
   if (!candles.length) {
     return <div className="chart-empty">Свечи временно недоступны.</div>;
@@ -429,6 +475,7 @@ function TradingChart({
   const volumeTop = top + priceHeight + gap;
   const rsiTop = volumeTop + volumeHeight + gap;
   const macdTop = rsiTop + (rsiHeight ? rsiHeight + gap : 0);
+  const chartBottom = totalHeight - bottomAxisHeight;
 
   const macdValues = [
     0,
@@ -447,6 +494,7 @@ function TradingChart({
   const hoveredIndex =
     hoverIndex === null ? candles.length - 1 : Math.max(0, Math.min(candles.length - 1, hoverIndex));
   const hoveredCandle = candles[hoveredIndex];
+  const hoveredPriceY = lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight);
 
   function buildPolyline(
     points: Array<number | null>,
@@ -483,6 +531,51 @@ function TradingChart({
       </g>
     );
   }
+
+  function getHoverIndexFromClientX(clientX: number) {
+    const svg = svgRef.current;
+    if (!svg) return candles.length - 1;
+
+    const rect = svg.getBoundingClientRect();
+    const relativeX = clientX - rect.left;
+    const normalizedX = (relativeX / rect.width) * width;
+    return Math.round((normalizedX - left - candleStep / 2) / candleStep);
+  }
+
+  function handleChartWheel(event: WheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+
+    const direction = event.deltaY > 0 ? 1 : -1;
+
+    if (event.ctrlKey) {
+      const anchorIndex = getHoverIndexFromClientX(event.clientX);
+      const anchorRatio = candles.length > 1 ? anchorIndex / Math.max(1, candles.length - 1) : 1;
+
+      setZoomFactor((current) => {
+        const next = direction > 0 ? current / 1.15 : current * 1.15;
+        const clampedZoom = Math.max(0.35, Math.min(12, next));
+        const nextVisible = Math.max(12, Math.min(allCandles.length, Math.round(baseVisibleCount / clampedZoom)));
+        const absoluteAnchor = startIndex + Math.max(0, Math.min(candles.length - 1, anchorIndex));
+        const projectedStart = Math.round(absoluteAnchor - anchorRatio * Math.max(0, nextVisible - 1));
+        const nextMaxStart = Math.max(0, allCandles.length - nextVisible);
+        setStartIndex(Math.max(0, Math.min(nextMaxStart, projectedStart)));
+        return clampedZoom;
+      });
+
+      return;
+    }
+
+    const shiftSteps = Math.max(1, Math.round(Math.abs((event.deltaX || event.deltaY) / 48)));
+    setStartIndex((current) => {
+      const next = current + direction * shiftSteps;
+      return Math.max(0, Math.min(maxStartIndex, next));
+    });
+  }
+
+  const bottomAxisTicks = Array.from({ length: Math.min(6, candles.length) }, (_, tickIndex) => {
+    if (candles.length === 1) return 0;
+    return Math.round((tickIndex / Math.max(1, Math.min(5, candles.length - 1))) * (candles.length - 1));
+  }).filter((value, index, list) => list.indexOf(value) === index);
 
   return (
     <div className="chart-shell">
@@ -538,19 +631,19 @@ function TradingChart({
         <span>H {formatPrice(hoveredCandle?.high ?? null)}</span>
         <span>L {formatPrice(hoveredCandle?.low ?? null)}</span>
         <span>C {formatPrice(hoveredCandle?.close ?? null)}</span>
+        <span className="tv-hover-hint">Ctrl + колесо: zoom · колесо: прокрутка по времени</span>
       </div>
 
       <div className="chart-svg-wrap tradingview-shell">
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${width} ${totalHeight}`}
           className="chart-svg"
           role="img"
           aria-label="market chart"
+          onWheel={handleChartWheel}
           onMouseMove={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            const relativeX = event.clientX - rect.left;
-            const normalizedX = (relativeX / rect.width) * width;
-            const nextIndex = Math.round((normalizedX - left - candleStep / 2) / candleStep);
+            const nextIndex = getHoverIndexFromClientX(event.clientX);
             setHoverIndex(nextIndex);
           }}
           onMouseLeave={() => setHoverIndex(null)}
@@ -570,6 +663,22 @@ function TradingChart({
               </g>
             );
           })}
+
+          {bottomAxisTicks.map((tickIndex) => {
+            const tickX = x(tickIndex);
+            const candle = candles[tickIndex];
+
+            return (
+              <g key={`time-tick-${tickIndex}`}>
+                <line x1={tickX} y1={top} x2={tickX} y2={chartBottom} className="tv-grid tv-grid-vertical" />
+                <text x={tickX} y={totalHeight - 10} textAnchor="middle" className="tv-axis-label tv-time-axis-label">
+                  {formatAxisTime(candle?.time, interval)}
+                </text>
+              </g>
+            );
+          })}
+
+          <line x1={left} y1={chartBottom} x2={width - right} y2={chartBottom} className="tv-axis-line" />
 
           {candles.map((candle, index) => {
             const cx = x(index);
@@ -690,26 +799,29 @@ function TradingChart({
             </>
           ) : null}
 
-          <line
-            x1={x(hoveredIndex)}
-            y1={top}
-            x2={x(hoveredIndex)}
-            y2={totalHeight - 18}
-            className="tv-crosshair"
-          />
+          <line x1={x(hoveredIndex)} y1={top} x2={x(hoveredIndex)} y2={chartBottom} className="tv-crosshair" />
 
-          <line
-            x1={left}
-            y1={lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight)}
-            x2={width - right}
-            y2={lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight)}
-            className="tv-crosshair"
-          />
+          <line x1={left} y1={hoveredPriceY} x2={width - right} y2={hoveredPriceY} className="tv-crosshair" />
+
+          <g className="tv-axis-box-group">
+            <rect x={width - right + 6} y={hoveredPriceY - 11} width={74} height={22} rx={6} className="tv-axis-box" />
+            <text x={width - right + 43} y={hoveredPriceY + 4} textAnchor="middle" className="tv-axis-box-text">
+              {formatPrice(hoveredCandle.close)}
+            </text>
+          </g>
+
+          <g className="tv-axis-box-group">
+            <rect x={Math.max(left, Math.min(width - right - 118, x(hoveredIndex) - 59))} y={chartBottom + 6} width={118} height={22} rx={6} className="tv-axis-box" />
+            <text x={Math.max(left + 59, Math.min(width - right - 59, x(hoveredIndex)))} y={chartBottom + 21} textAnchor="middle" className="tv-axis-box-text">
+              {formatAxisTime(hoveredCandle.time, interval)}
+            </text>
+          </g>
         </svg>
       </div>
     </div>
   );
 }
+
 
 export default function DashboardClient({
   initialDashboard,
