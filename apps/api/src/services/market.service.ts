@@ -649,7 +649,7 @@ export async function buildMarketContext(
 
   const [dailyRaw, candles1hRaw, candles4hRaw, depth, assetSpot, quoteUsdPrice, liquidity, sentiment] =
     await Promise.all([
-      getPionexKlines(baseSymbol, quoteSymbol, "1D", 35),
+      getPionexKlines(baseSymbol, quoteSymbol, "1D", 370),
       getPionexKlines(baseSymbol, quoteSymbol, "60M", 140),
       getPionexKlines(baseSymbol, quoteSymbol, "4H", 140),
       depthPromise,
@@ -702,7 +702,8 @@ export async function buildMarketContext(
   const price = ticker.close;
   const priceUsd = quoteUsdPrice !== null ? price * quoteUsdPrice : null;
 
-  const dailyCloses = candles.map((item) => item.close);
+  const candles30d = candles.slice(-30);
+  const dailyCloses = candles30d.map((item) => item.close);
   const closes1h = candles1h.map((item) => item.close);
   const closes4h = candles4h.map((item) => item.close);
 
@@ -712,7 +713,7 @@ export async function buildMarketContext(
   const ema50_1d = calculateEMA(dailyCloses, 50);
   const dailyMacd = calculateMACD(dailyCloses);
   const rsi14 = calculateRSI(dailyCloses, 14);
-  const adx14 = calculateADX(candles, 14);
+  const adx14 = calculateADX(candles30d, 14);
   const change30d = calculatePercentChange(dailyCloses[0], dailyCloses[dailyCloses.length - 1]);
   const trend30d = detectTrend(dailyCloses, sma7, sma30);
 
@@ -733,8 +734,8 @@ export async function buildMarketContext(
   const macd4h = calculateMACD(closes4h);
   const volume4h = latestVolumeRatio(candles4h);
 
-  const highs = candles.map((c) => c.high);
-  const lows = candles.map((c) => c.low);
+  const highs = candles30d.map((c) => c.high);
+  const lows = candles30d.map((c) => c.low);
 
   const recentSwingHigh = Math.max(...candles1h.slice(-24).map((c) => c.high));
   const recentSwingLow = Math.min(...candles1h.slice(-24).map((c) => c.low));

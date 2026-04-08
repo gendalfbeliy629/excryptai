@@ -46,7 +46,7 @@ type IndicatorKey =
 type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
 type ChartInterval = "1H" | "4H" | "1D";
-type ChartWindow = "1D" | "1W" | "1M";
+type ChartWindow = "1D" | "1W" | "1Y";
 
 const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "ema20", label: "EMA 20" },
@@ -308,7 +308,7 @@ function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): numb
 
   if (windowValue === "1D") return 1;
   if (windowValue === "1W") return 7;
-  return 30;
+  return 365;
 }
 
 function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSymbol: string) {
@@ -387,7 +387,7 @@ function TradingChart({
   activeIndicators: Record<IndicatorKey, boolean>;
 }) {
   const [interval, setIntervalValue] = useState<ChartInterval>("1H");
-  const [windowValue, setWindowValue] = useState<ChartWindow>("1W");
+  const [windowValue, setWindowValue] = useState<ChartWindow>("1Y");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [zoomFactor, setZoomFactor] = useState(1);
   const [startIndex, setStartIndex] = useState(0);
@@ -495,6 +495,8 @@ function TradingChart({
     hoverIndex === null ? candles.length - 1 : Math.max(0, Math.min(candles.length - 1, hoverIndex));
   const hoveredCandle = candles[hoveredIndex];
   const hoveredPriceY = lineY(hoveredCandle.close, minPrice, maxPrice, top, priceHeight);
+  const hoveredCandleToneClass =
+    hoveredCandle.close >= hoveredCandle.open ? "tv-hover-card positive" : "tv-hover-card negative";
 
   function buildPolyline(
     points: Array<number | null>,
@@ -612,7 +614,7 @@ function TradingChart({
         </div>
 
         <div className="tv-control-group">
-          {(["1D", "1W", "1M"] as ChartWindow[]).map((item) => (
+          {(["1D", "1W", "1Y"] as ChartWindow[]).map((item) => (
             <button
               key={item}
               type="button"
@@ -625,7 +627,7 @@ function TradingChart({
         </div>
       </div>
 
-      <div className="tv-hover-card">
+      <div className={hoveredCandleToneClass}>
         <span>{formatDateTime(hoveredCandle?.time)}</span>
         <span>O {formatPrice(hoveredCandle?.open ?? null)}</span>
         <span>H {formatPrice(hoveredCandle?.high ?? null)}</span>
@@ -1230,29 +1232,29 @@ export default function DashboardClient({
               <>
                 {panelMode === "summary" && detail ? (
                   <div className="summary-metrics-grid">
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>Сигнал</span>
                       <strong className={signalClassName(detail.signal.signal)}>
                         {detail.signal.signal}
                       </strong>
                     </div>
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>Цена</span>
                       <strong>{formatPrice(detail.market.spot.priceUsd)}</strong>
                     </div>
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>24ч</span>
                       <strong>{formatPercent(detail.market.spot.change24h)}</strong>
                     </div>
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>30д</span>
                       <strong>{formatPercent(detail.market.technicals.change30d)}</strong>
                     </div>
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>RSI 14</span>
                       <strong>{formatNumber(detail.market.technicals.rsi14)}</strong>
                     </div>
-                    <div className="summary-metric">
+                    <div className="summary-metric summary-metric-inline">
                       <span>TVL</span>
                       <strong>{formatCompactUsd(detail.market.liquidity.totalTvlUsd)}</strong>
                     </div>

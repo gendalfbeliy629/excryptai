@@ -394,10 +394,18 @@ button {
   border: 1px solid #233244;
   background: #111926;
   border-radius: 10px;
-  padding: 6px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.summary-metric-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
 }
 
 .summary-metric span {
@@ -409,6 +417,10 @@ button {
   color: #ffffff;
   font-size: 12px;
   font-weight: 400;
+}
+
+.summary-metric-inline strong {
+  text-align: right;
 }
 
 .summary-text-block {
@@ -563,6 +575,19 @@ button {
   background: #0f1621;
   color: #c7d4ea;
   font-size: 12px;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.tv-hover-card.positive {
+  color: #8df0cb;
+  border-color: rgba(0, 192, 135, 0.48);
+  background: rgba(0, 192, 135, 0.08);
+}
+
+.tv-hover-card.negative {
+  color: #ff9f9f;
+  border-color: rgba(255, 91, 91, 0.48);
+  background: rgba(255, 91, 91, 0.08);
 }
 
 .tv-hover-hint {
@@ -604,7 +629,7 @@ button {
 
 .tv-axis-label {
   fill: #7f95b5;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .tv-time-axis-label {
@@ -728,7 +753,7 @@ button {
 
 .tv-axis-box-text {
   fill: #e7efff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -814,7 +839,7 @@ button {
 .indicators-open .indicator-toggle,
 .indicators-open .indicator-stats-grid,
 .indicators-open .indicator-stat-card {
-  opacity: 0.6;
+  opacity: 0.75;
 }
 
 .indicator-stats-grid {
