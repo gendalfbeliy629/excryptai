@@ -78,11 +78,22 @@ function padDatePart(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-function formatDateTime(value: string | number | null | undefined): string {
-  if (!value) return "—";
+function toDate(value: string | number | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
 
-  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+  if (typeof value === "number") {
+    const normalized = value < 10_000_000_000 ? value * 1000 : value;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value: string | number | null | undefined): string {
+  const date = toDate(value);
+  if (!date) return "—";
 
   const day = padDatePart(date.getDate());
   const month = padDatePart(date.getMonth() + 1);
@@ -94,10 +105,8 @@ function formatDateTime(value: string | number | null | undefined): string {
 }
 
 function formatAxisTime(value: string | number | null | undefined, interval: ChartInterval): string {
-  if (!value) return "—";
-
-  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+  const date = toDate(value);
+  if (!date) return "—";
 
   const day = padDatePart(date.getDate());
   const month = padDatePart(date.getMonth() + 1);
