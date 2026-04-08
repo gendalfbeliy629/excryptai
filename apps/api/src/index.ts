@@ -4,14 +4,13 @@ import { getBot } from "./bot/bot";
 import { forgetTelegramSubscriber, getTelegramSubscribers } from "./utils/telegram-subscribers";
 import {
   buildMarketContext,
-  getCoinInfo,
   parseMarketPair
 } from "./services/market.service";
 import { evaluateMarketSignal, BuyScanMode } from "./services/signal.service";
 import { getBuyScanResult, type BuyScanResult } from "./services/buy.service";
 import { getAssetInfo } from "./services/info.service";
 import { askAI } from "./services/ai.service";
-import { SYMBOL_TO_COINCAP_ID, normalizeSymbol } from "./utils/symbols";
+import { SYMBOL_TO_COINCAP_ID } from "./utils/symbols";
 import {
   getSharedBuyScanResult,
   getSharedBuyScanStatus,
@@ -276,9 +275,6 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.get("/api/symbols", (_req, res) => {
-  return ok(res, ALL_SYMBOLS);
-});
 
 app.get("/api/dashboard/bootstrap-status", async (req, res) => {
   try {
@@ -504,15 +500,6 @@ app.get("/api/ai/:symbol", async (req, res) => {
   }
 });
 
-app.get("/api/spot/:symbol", async (req, res) => {
-  try {
-    const symbol = normalizeSymbol(String(req.params.symbol || ""));
-    const spot = await getCoinInfo(symbol);
-    return ok(res, spot);
-  } catch (error) {
-    return fail(res, error, 400);
-  }
-});
 
 const server = app.listen(env.PORT, env.HOST, () => {
   console.log(`API server running on http://${env.HOST}:${env.PORT}`);
