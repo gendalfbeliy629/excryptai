@@ -1,42 +1,36 @@
 [
   {
     "route": "/dashboard",
-    "firstLoadUncompressedJsBytes": 543814,
+    "firstLoadUncompressedJsBytes": 538658,
     "firstLoadChunkPaths": [
-      ".next/static/chunks/0ga9ox6iqb-zh.js",
-      ".next/static/chunks/0wo0zz4rhjzv8.js",
-      ".next/static/chunks/0poco5zpvbn3m.js",
+      ".next/static/chunks/0z4dwu6e7gibv.js",
+      ".next/static/chunks/0174i024wzbop.js",
       ".next/static/chunks/0k~kgky9qm7b8.js",
-      ".next/static/chunks/0yocbhk7tkjcn.js",
+      ".next/static/chunks/0f~ezs304fc59.js",
       ".next/static/chunks/0~j0nc__8o.5t.js",
-      ".next/static/chunks/1741t3v97m4h6.js",
-      ".next/static/chunks/turbopack-16-korzti2upn.js"
+      ".next/static/chunks/turbopack-0sz_bhp_glhdr.js"
     ]
   },
   {
     "route": "/",
-    "firstLoadUncompressedJsBytes": 519519,
+    "firstLoadUncompressedJsBytes": 513541,
     "firstLoadChunkPaths": [
-      ".next/static/chunks/0ga9ox6iqb-zh.js",
-      ".next/static/chunks/0wo0zz4rhjzv8.js",
+      ".next/static/chunks/0z4dwu6e7gibv.js",
       ".next/static/chunks/0k~kgky9qm7b8.js",
-      ".next/static/chunks/0yocbhk7tkjcn.js",
+      ".next/static/chunks/0f~ezs304fc59.js",
       ".next/static/chunks/0~j0nc__8o.5t.js",
-      ".next/static/chunks/1741t3v97m4h6.js",
-      ".next/static/chunks/turbopack-16-korzti2upn.js"
+      ".next/static/chunks/turbopack-0sz_bhp_glhdr.js"
     ]
   },
   {
     "route": "/_not-found",
-    "firstLoadUncompressedJsBytes": 519519,
+    "firstLoadUncompressedJsBytes": 513541,
     "firstLoadChunkPaths": [
-      ".next/static/chunks/0ga9ox6iqb-zh.js",
-      ".next/static/chunks/0wo0zz4rhjzv8.js",
+      ".next/static/chunks/0z4dwu6e7gibv.js",
       ".next/static/chunks/0k~kgky9qm7b8.js",
-      ".next/static/chunks/0yocbhk7tkjcn.js",
+      ".next/static/chunks/0f~ezs304fc59.js",
       ".next/static/chunks/0~j0nc__8o.5t.js",
-      ".next/static/chunks/1741t3v97m4h6.js",
-      ".next/static/chunks/turbopack-16-korzti2upn.js"
+      ".next/static/chunks/turbopack-0sz_bhp_glhdr.js"
     ]
   }
 ]

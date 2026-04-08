@@ -1,6 +1,5 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import Link from "next/link";
 import React from "react";
 
 export const metadata: Metadata = {
@@ -17,15 +16,7 @@ export default function RootLayout({
     <html lang="ru">
       <body>
         <div className="shell">
-          <header className="header">
-            <div className="header-inner">
-              <Link className="brand" href="/dashboard">
-                crypto-<span>ai</span>
-              </Link>
-            </div>
-          </header>
-
-          <main className="main">{children}</main>
+          <main className="main main-compact">{children}</main>
         </div>
       </body>
     </html>

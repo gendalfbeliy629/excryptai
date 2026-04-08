@@ -4,6 +4,7 @@ import { registerStartHandler } from "./handlers/start";
 import { registerPriceHandler } from "./handlers/price";
 import { registerBuyHandler } from "./handlers/buy";
 import { registerInfoHandler } from "./handlers/info";
+import { registerAIHandler } from "./handlers/ai";
 import { rememberTelegramSubscriber } from "../utils/telegram-subscribers";
 
 let botInstance: Telegraf | null = null;
@@ -35,6 +36,7 @@ export function getBot(): Telegraf {
 
   registerStartHandler(bot);
   registerPriceHandler(bot);
+  registerAIHandler(bot);
   registerBuyHandler(bot);
   registerInfoHandler(bot);
 

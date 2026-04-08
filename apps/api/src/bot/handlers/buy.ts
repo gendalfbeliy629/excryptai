@@ -8,18 +8,11 @@ import {
 import { BuyScanMode } from "../../services/signal.service";
 import {
   getSharedBuyScanResult,
+  getSharedBuyScanStatus,
   setSharedBuyScanResult
 } from "../../utils/buy-cache";
 
-const STABLE_QUOTES = new Set([
-  "USD",
-  "USDT",
-  "USDC",
-  "BUSD",
-  "FDUSD",
-  "TUSD",
-  "DAI"
-]);
+const STABLE_QUOTES = new Set(["USD", "USDT", "USDC", "BUSD", "FDUSD", "TUSD", "DAI"]);
 
 function formatValue(value: number, quoteSymbol: string): string {
   const quote = quoteSymbol.toUpperCase();
@@ -52,6 +45,11 @@ function formatUnixTime(value: number | null): string {
   return new Date(value).toISOString().replace(".000Z", "Z");
 }
 
+function formatCacheTime(value: string | null): string {
+  if (!value) return "n/a";
+  return value.replace("T", " ").replace(".000Z", "Z");
+}
+
 function formatConfirmationStrategy(strategy: string): string {
   switch (strategy) {
     case "1H_CANDLE_CLOSE":
@@ -72,17 +70,12 @@ function joinMessageSections(sections: Array<string | null | undefined | false>)
     .join("\n\n");
 }
 
-function buildFailedMarketsBlock(
-  failedDetails: FailedMarketDetail[],
-  maxItems = 12
-): string {
+function buildFailedMarketsBlock(failedDetails: FailedMarketDetail[], maxItems = 12): string {
   if (!failedDetails.length) {
     return "";
   }
 
-  const lines = failedDetails
-    .slice(0, maxItems)
-    .map((item) => `- ${item.pair}: ${item.reason}`);
+  const lines = failedDetails.slice(0, maxItems).map((item) => `- ${item.pair}: ${item.reason}`);
 
   if (failedDetails.length > maxItems) {
     lines.push(`- ... еще ${failedDetails.length - maxItems} рынков с ошибками`);
@@ -112,10 +105,7 @@ function buildBreakdownSection(
   }
 
   const lines = breakdown.slice(0, maxItems).map((item) => {
-    const samples = item.samplePairs.length
-      ? ` | примеры: ${item.samplePairs.join(", ")}`
-      : "";
-
+    const samples = item.samplePairs.length ? ` | примеры: ${item.samplePairs.join(", ")}` : "";
     return `- ${item.label}: ${item.count}${samples}`;
   });
 
@@ -126,9 +116,10 @@ function buildBreakdownSection(
   return joinMessageSections([title, lines.join("\n")]);
 }
 
-function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>): string {
+function buildSummaryBlock(result: Awaited<ReturnType<typeof getBuyScanResult>>, cacheUpdatedAt: string): string {
   const summaryLines = [
     `- Режим сканирования: /buy ${result.summary.scanMode}`,
+    `- Обновление кеша: ${cacheUpdatedAt}`,
     `- Всего spot-рынков на Pionex: ${result.summary.totalSpotMarkets}`,
     `- Stage 1 проверено быстрым фильтром: ${result.summary.stage1Checked}`,
     `- Stage 2 кандидатов на полный анализ: ${result.summary.stage2Candidates}`,
@@ -177,7 +168,7 @@ function buildBuyCard(item: BuyCandidate): string {
     `Почему BUY: ${item.reason}`,
     `Плюсы: ${item.positives.length ? item.positives.join("; ") : "n/a"}`,
     `Риски: ${item.negatives.length ? item.negatives.join("; ") : "n/a"}`,
-    `|----------------------|`,
+    "|----------------------|",
     `Как сопровождать сделку:\n${managementText}`
   ].join("\n");
 }
@@ -210,7 +201,9 @@ export function registerBuyHandler(bot: Telegraf) {
         setSharedBuyScanResult(result);
       }
 
-      const summaryBlock = buildSummaryBlock(result);
+      const cacheStatus = getSharedBuyScanStatus(mode);
+      const cacheUpdatedAt = formatCacheTime(cacheStatus.warmedAt ?? new Date().toISOString());
+      const summaryBlock = buildSummaryBlock(result, cacheUpdatedAt);
 
       const stage1BreakdownSection = buildBreakdownSection(
         `Breakdown Stage 1 — причины отсева на быстром фильтре (${mode}):`,

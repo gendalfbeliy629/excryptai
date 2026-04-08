@@ -31,7 +31,7 @@ const SUPPORTED_SYMBOLS = [
   "FIL",
   "ICP",
   "HBAR",
-  "INJ",
+  "INJ"
 ];
 
 function extractPairOrSymbol(prompt: string): {
@@ -45,9 +45,7 @@ function extractPairOrSymbol(prompt: string): {
     return parseMarketPair(`${pairMatch[1]}/${pairMatch[2]}`);
   }
 
-  const symbolMatch = prompt.match(
-    new RegExp(`\\b(${SUPPORTED_SYMBOLS.join("|")})\\b`, "i")
-  );
+  const symbolMatch = prompt.match(new RegExp(`\\b(${SUPPORTED_SYMBOLS.join("|")})\\b`, "i"));
 
   if (symbolMatch?.[1]) {
     return parseMarketPair(symbolMatch[1].toUpperCase());
@@ -59,23 +57,22 @@ function extractPairOrSymbol(prompt: string): {
 export function registerAIHandler(bot: Telegraf) {
   bot.command("ai", async (ctx) => {
     try {
-      const prompt = ctx.message.text.replace("/ai", "").trim();
+      const prompt = "text" in ctx.message ? ctx.message.text.replace("/ai", "").trim() : "";
       const { baseSymbol, quoteSymbol, displayPair } = extractPairOrSymbol(prompt);
-
-      const finalPrompt =
-        prompt.length > 0
-          ? prompt
-          : `Сделай анализ пары ${displayPair} на горизонте 1 месяц`;
-
       const market = await buildMarketContext(baseSymbol, quoteSymbol);
-      const answer = await askAI(finalPrompt, market);
+      const answer = await askAI(
+        `Дай краткую аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
+        market
+      );
 
-      await ctx.reply(answer);
+      await ctx.reply(answer, {
+        link_preview_options: {
+          is_disabled: true
+        }
+      });
     } catch (error) {
       console.error("AI handler error:", error);
-      await ctx.reply(
-        "❌ Не удалось сделать AI-анализ. Примеры: /ai BTC или /ai BTC/USDT"
-      );
+      await ctx.reply("❌ Не удалось сделать AI-анализ. Примеры: /ai BTC или /ai BTC/USDT");
     }
   });
 }

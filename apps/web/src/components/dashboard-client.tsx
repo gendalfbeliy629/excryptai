@@ -165,6 +165,24 @@ function buildManagementLines(
       ];
 }
 
+function buildBuySignalLines(item: DashboardData["topBuys"][number]): string[] {
+  return [
+    `${item.rank}. ${item.pair} — BUY`,
+    `Текущая цена: ${formatPrice(item.priceUsd ?? item.price)}`,
+    `Зона входа: ${formatPrice(item.entryFrom)} - ${formatPrice(item.entryTo)}`,
+    `Подтверждение: ${item.entryConfirmationText}`,
+    `Stop-loss: ${formatPrice(item.initialStopLoss)} (-${formatNumber(item.riskPercent)}%)`,
+    `TP1: ${formatPrice(item.tp1)} (${formatPercent(item.tp1Percent)}) | R/R 1:${formatNumber(item.riskRewardTp1)}`,
+    `TP2: ${formatPrice(item.tp2)} (${formatPercent(item.tp2Percent)}) | R/R 1:${formatNumber(item.riskRewardTp2)}`,
+    `TP3: ${formatPrice(item.tp3)} (${formatPercent(item.tp3Percent)}) | R/R 1:${formatNumber(item.riskRewardTp3)}`,
+    `Break-even: ${formatPrice(item.breakEvenActivationPrice)} | trailing-stop: ${formatNumber(item.trailingStopPercent)}%`,
+    `Сопротивление: ${formatPrice(item.nearestResistance)} | поддержка: ${formatPrice(item.nearestSupport)}`,
+    `30д: ${formatPercent(item.change30d)} | 24ч: ${formatPercent(item.change24h)} | RSI: ${formatNumber(item.rsi14)}`,
+    `Почему BUY: ${item.reason}`,
+    item.managementPlan.length ? `Сопровождение: ${item.managementPlan.join(" ")}` : null
+  ].filter((itemLine): itemLine is string => Boolean(itemLine));
+}
+
 function calculateEMA(values: number[], period: number): Array<number | null> {
   if (!values.length) return [];
 
@@ -938,13 +956,6 @@ export default function DashboardClient({
         </div>
       ) : null}
 
-      <section className="hero hero-compact">
-        <h1 className="page-title">Crypto AI Dashboard</h1>
-        <p className="page-subtitle dashboard-subtitle">
-          Темный dashboard в стиле Pionex: крупный график, список рынка, BUY-сигналы и аналитика.
-        </p>
-      </section>
-
       {topError ? (
         <section className="section section-tight">
           <div className="card warning-card">
@@ -1034,10 +1045,9 @@ export default function DashboardClient({
         <div className="dashboard-middle-stack">
           <div className="card dashboard-list-card dashboard-buy-card">
             <div className="list-title-row buy-signals-head">
-              <div>
-                <h3>Сигналы на покупку</h3>
+              <div className="buy-signals-title-wrap">
                 <div className="muted buy-signals-time">
-                  Получены: {formatDateTime(dashboard?.generatedAt ?? null)}
+                  обновление кеша {formatDateTime(dashboard?.generatedAt ?? null)}
                 </div>
               </div>
 
@@ -1059,29 +1069,41 @@ export default function DashboardClient({
               </div>
             </div>
 
-            <div className="signal-list fill-scroll">
+            <div className="signal-list fill-scroll buy-signal-detail-list">
               {topBuys.length ? (
-                topBuys.map((item) => (
-                  <button
-                    type="button"
-                    key={item.symbol}
-                    className={item.symbol === selectedSymbol ? "market-row active" : "market-row"}
-                    onClick={() => {
-                      setSelectedSymbol(item.symbol);
-                      setPanelMode("summary");
-                    }}
-                  >
-                    <div className="market-row-left">
-                      <strong>{item.pair}</strong>
-                      <div className="market-row-meta">{item.name}</div>
-                    </div>
+                topBuys.map((item) => {
+                  const lines = buildBuySignalLines(item);
 
-                    <div className="market-row-right">
-                      <span className="pill signal-buy">BUY</span>
-                      <span className="market-row-price">{formatPrice(item.priceUsd)}</span>
-                    </div>
-                  </button>
-                ))
+                  return (
+                    <button
+                      type="button"
+                      key={item.symbol}
+                      className={item.symbol === selectedSymbol ? "market-row market-row-detailed active" : "market-row market-row-detailed"}
+                      onClick={() => {
+                        setSelectedSymbol(item.symbol);
+                        setPanelMode("summary");
+                      }}
+                    >
+                      <div className="market-row-topline">
+                        <div className="market-row-left">
+                          <span className="market-row-pair">{item.pair}</span>
+                          <div className="market-row-meta">{item.name}</div>
+                        </div>
+
+                        <div className="market-row-right">
+                          <span className="pill signal-buy">BUY</span>
+                          <span className="market-row-price">{formatPrice(item.priceUsd ?? item.price)}</span>
+                        </div>
+                      </div>
+
+                      <div className="market-row-text">
+                        {lines.map((line, index) => (
+                          <p key={`${item.symbol}-${index}`}>{line}</p>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })
               ) : (
                 <div className="empty-state">
                   <p>Сейчас в кеше нет BUY-сигналов.</p>
@@ -1109,7 +1131,7 @@ export default function DashboardClient({
                   }}
                 >
                   <div className="market-row-left">
-                    <strong>{item.pair}</strong>
+                    <span className="market-row-pair">{item.pair}</span>
                     <div className="market-row-meta">{item.name}</div>
                   </div>
 
