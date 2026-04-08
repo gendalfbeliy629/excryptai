@@ -237,24 +237,13 @@ async function getDashboardBuyScanResult(
     return cached;
   }
 
-  await warmBuySignalsCache({
-    force: false,
-    mode,
-    limit: Math.max(limit, 10)
-  });
+  const isWarming = Boolean(getSharedBuyScanWarmupPromise(mode));
 
-  const warmed = getSharedBuyScanResult(limit, mode);
-  if (warmed) {
-    return warmed;
-  }
-
-  const result = await getBuyScanResult(Math.max(limit, 10), mode);
-  setSharedBuyScanResult(result);
-
-  return {
-    ...result,
-    buys: result.buys.slice(0, limit)
-  };
+  throw new Error(
+    isWarming
+      ? `BUY cache for mode ${mode} is still warming up`
+      : `BUY cache for mode ${mode} is not ready`
+  );
 }
 
 async function buildMarketListItem(symbol: string, volume24h = 0): Promise<MarketListItem | null> {
@@ -341,14 +330,7 @@ app.get("/api/symbols", (_req, res) => {
 app.get("/api/dashboard/bootstrap-status", async (req, res) => {
   try {
     const mode = parseMode(req.query.mode);
-    const cached = getSharedBuyScanResult(5, mode);
     const cacheStatus = getSharedBuyScanStatus(mode);
-
-    if (!cached && !getSharedBuyScanWarmupPromise(mode)) {
-      void warmBuySignalsCache({ force: false, mode, limit: 10 }).catch((error) => {
-        console.error("Buy signal warmup failed:", error);
-      });
-    }
 
     return ok(res, {
       buySignalsCacheReady: cacheStatus.hasReadyCache,
