@@ -98,6 +98,7 @@ export type DashboardData = {
     scanMode?: string;
   };
   generatedAt: string | null;
+  buyCommandText: string;
   scanMode: "soft" | "hard";
   degraded?: boolean;
 };

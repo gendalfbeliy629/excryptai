@@ -370,7 +370,7 @@ button {
 .dashboard-indicators-card,
 .dashboard-full-card,
 .dashboard-actions {
-  margin-bottom: 10px;
+  margin-bottom: 13px;
 }
 
 .signal-list {
@@ -766,6 +766,19 @@ button {
   border-color: var(--accent);
 }
 
+.indicator-dropdown-panel {
+  margin-top: 4px;
+  border: 1px solid rgba(35, 50, 68, 0.7);
+  background: rgba(15, 22, 33, 0.7);
+  backdrop-filter: blur(2px);
+  border-radius: 12px;
+  padding: 6px;
+}
+
+.indicators-open {
+  background: rgba(20, 27, 38, 0.7);
+}
+
 .indicator-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -922,8 +935,33 @@ button {
   min-width: 0;
 }
 
+.buy-signals-title-wrap h3 {
+  margin: 0;
+}
+
 .buy-signal-detail-list {
   padding-top: 2px;
+}
+
+.buy-command-scroll {
+  padding-right: 4px;
+}
+
+.buy-command-text-block {
+  border: 1px solid #223041;
+  background: #0f1621;
+  border-radius: 10px;
+  padding: 8px;
+  min-height: 100%;
+}
+
+.buy-command-text-block p {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.18;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .market-row-detailed {

@@ -20,66 +20,19 @@ import {
   setSharedBuyScanWarmupPromise
 } from "./utils/buy-cache";
 import { getAllPionexSpotTickers } from "./services/pionex.service";
+import { buildBuyCommandMessage, formatCacheTime } from "./utils/buy-message";
 
 const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
-function formatUsd(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return "n/a";
-  }
-
-  if (value >= 1000) return `$${value.toFixed(2)}`;
-  if (value >= 1) return `$${value.toFixed(4)}`;
-  if (value >= 0.01) return `$${value.toFixed(6)}`;
-  return `$${value.toFixed(8)}`;
-}
-
-function formatSignedPercent(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return "n/a";
-  }
-
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
-}
-
-function buildTelegramBuyNotification(result: BuyScanResult, mode: BuyScanMode): string | null {
-  if (!result.buys.length) {
-    return null;
-  }
-
-  const lines: string[] = [
-    `🟢 Обновлен кеш BUY-сигналов (${mode})`,
-    `Найдено сигналов: ${result.buys.length}`,
-    `Проверено рынков: ${result.summary.totalChecked}`,
-    ""
-  ];
-
-  for (const item of result.buys.slice(0, 3)) {
-    lines.push(
-      `${item.rank}. ${item.pair} — BUY`,
-      `Текущая цена: ${formatUsd(item.priceUsd)}`,
-      `Зона входа: ${formatUsd(item.entryFrom)} - ${formatUsd(item.entryTo)}`,
-      `Stop-loss: ${formatUsd(item.initialStopLoss)} (-${item.riskPercent.toFixed(2)}%)`,
-      `TP1: ${formatUsd(item.tp1)} (${formatSignedPercent(item.tp1Percent)})`,
-      `TP2: ${formatUsd(item.tp2)} (${formatSignedPercent(item.tp2Percent)})`,
-      `TP3: ${formatUsd(item.tp3)} (${formatSignedPercent(item.tp3Percent)})`,
-      `Сопровождение: ${item.managementPlan[0] ?? item.reason}`,
-      ""
-    );
-  }
-
-  lines.push(`Комментарий: ${result.summary.explanation}`);
-
-  return lines.join("\n").trim();
-}
-
 async function notifyTelegramSubscribersAboutBuys(result: BuyScanResult, mode: BuyScanMode) {
-  const text = buildTelegramBuyNotification(result, mode);
-
-  if (!text) {
+  if (!result.buys.length) {
     return;
   }
+
+  const text = [
+    `🟢 Обновлен кеш BUY-сигналов (${mode})`,
+    buildBuyCommandMessage(result, mode, formatCacheTime(new Date().toISOString()))
+  ].join("\n\n");
 
   const subscribers = getTelegramSubscribers();
   if (!subscribers.length) {
@@ -395,6 +348,11 @@ app.get("/api/dashboard", async (req, res) => {
       topBuys: buys.buys,
       summary: buys.summary,
       generatedAt: cacheStatus.warmedAt,
+      buyCommandText: buildBuyCommandMessage(
+        buys,
+        mode,
+        formatCacheTime(cacheStatus.warmedAt ?? new Date().toISOString())
+      ),
       scanMode: mode,
       degraded: featured.length < DASHBOARD_SYMBOLS.length
     });
