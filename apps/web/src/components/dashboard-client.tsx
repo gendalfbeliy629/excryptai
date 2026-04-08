@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AiResponse,
+  Candle,
   DashboardData,
   getAiAnalysis,
   getDashboardBootstrapStatus,
@@ -13,8 +14,7 @@ import {
   InfoResponse,
   MarketDetail,
   MarketsResponse,
-  refreshBuySignalsCache,
-  Candle
+  refreshBuySignalsCache
 } from "../lib/api";
 import {
   formatCompactUsd,
@@ -67,6 +67,7 @@ function signalClassName(signal: "BUY" | "HOLD" | "SELL") {
 
 function normalizeTextBlock(text: string | null | undefined): string[] {
   if (!text) return [];
+
   return text
     .split("\n")
     .map((line) => line.trim())
@@ -75,6 +76,7 @@ function normalizeTextBlock(text: string | null | undefined): string[] {
 
 function formatDateTime(value: string | number | null | undefined): string {
   if (!value) return "—";
+
   const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
@@ -158,7 +160,9 @@ function buildManagementLines(
 
   return lines.length
     ? lines
-    : ["Для этой пары отдельный buy-план сейчас отсутствует, отображается только summary из анализа."];
+    : [
+        "Для этой пары отдельный buy-план сейчас отсутствует, отображается только summary из анализа."
+      ];
 }
 
 function calculateEMA(values: number[], period: number): Array<number | null> {
@@ -286,10 +290,7 @@ function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): numb
   return 30;
 }
 
-function useSelectedMarket(
-  initialDetail: MarketDetail | null,
-  initialSelectedSymbol: string
-) {
+function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSymbol: string) {
   const [selectedSymbol, setSelectedSymbol] = useState(initialSelectedSymbol);
   const [detail, setDetail] = useState<MarketDetail | null>(initialDetail);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -447,7 +448,13 @@ function TradingChart({
     hoverIndex === null ? candles.length - 1 : Math.max(0, Math.min(candles.length - 1, hoverIndex));
   const hoveredCandle = candles[hoveredIndex];
 
-  function buildPolyline(points: Array<number | null>, min: number, max: number, chartTop: number, chartHeight: number) {
+  function buildPolyline(
+    points: Array<number | null>,
+    min: number,
+    max: number,
+    chartTop: number,
+    chartHeight: number
+  ) {
     return candles
       .map((_, index) => {
         const value = points[index];
@@ -476,55 +483,6 @@ function TradingChart({
       </g>
     );
   }
-
-  const indicatorStats = [
-    {
-      key: "ema20" as IndicatorKey,
-      label: "EMA 20",
-      value: interval === "1D"
-        ? detail?.market.technicals.ema20
-        : interval === "4H"
-          ? detail?.market.technicals.intraday4h?.ema20
-          : detail?.market.technicals.intraday1h?.ema20
-    },
-    {
-      key: "ema50" as IndicatorKey,
-      label: "EMA 50",
-      value: interval === "1D"
-        ? detail?.market.technicals.ema50
-        : interval === "4H"
-          ? detail?.market.technicals.intraday4h?.ema50
-          : detail?.market.technicals.intraday1h?.ema50
-    },
-    {
-      key: "rsi" as IndicatorKey,
-      label: "RSI 14",
-      value: interval === "1D"
-        ? detail?.market.technicals.rsi14
-        : interval === "4H"
-          ? detail?.market.technicals.intraday4h?.rsi14
-          : detail?.market.technicals.intraday1h?.rsi14
-    },
-    {
-      key: "macd" as IndicatorKey,
-      label: "MACD",
-      value: interval === "1D"
-        ? detail?.market.technicals.macdLine
-        : interval === "4H"
-          ? detail?.market.technicals.intraday4h?.macdLine
-          : detail?.market.technicals.intraday1h?.macdLine
-    },
-    {
-      key: "supports" as IndicatorKey,
-      label: "Resistance",
-      value: detail?.signal.nearestResistance ?? null
-    },
-    {
-      key: "tradePlan" as IndicatorKey,
-      label: "Entry low",
-      value: detail?.signal.entryZoneLow ?? null
-    }
-  ];
 
   return (
     <div className="chart-shell">
@@ -668,9 +626,9 @@ function TradingChart({
             </>
           ) : null}
 
-          {activeIndicators.confirmation ? (
-            renderHorizontalLevel(detail?.signal.confirmationLevel ?? null, "Confirm", "tv-level tv-level-confirm")
-          ) : null}
+          {activeIndicators.confirmation
+            ? renderHorizontalLevel(detail?.signal.confirmationLevel ?? null, "Confirm", "tv-level tv-level-confirm")
+            : null}
 
           {candles.map((candle, index) => {
             const volume = candle.volumeTo ?? candle.volumeFrom ?? 0;
@@ -749,65 +707,6 @@ function TradingChart({
           />
         </svg>
       </div>
-
-      <details className="indicator-accordion">
-        <summary>Индикаторы и уровни</summary>
-
-        <div className="indicator-grid">
-          {INDICATORS.map((indicator) => {
-            const enabled = activeIndicators[indicator.key];
-
-            return (
-              <button
-                key={indicator.key}
-                type="button"
-                className={enabled ? "indicator-toggle active" : "indicator-toggle"}
-                onClick={() =>
-                  window.requestAnimationFrame(() => {
-                    const button = document.activeElement as HTMLElement | null;
-                    button?.blur();
-                  }) || null
-                }
-              >
-                <span className="indicator-check" />
-                <span>{indicator.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="indicator-grid compact">
-          {INDICATORS.map((indicator) => {
-            const enabled = activeIndicators[indicator.key];
-
-            return (
-              <button
-                key={`switch-${indicator.key}`}
-                type="button"
-                className={enabled ? "indicator-toggle active" : "indicator-toggle"}
-                onClick={() => {
-                  const event = new CustomEvent("toggle-indicator", { detail: indicator.key });
-                  window.dispatchEvent(event);
-                }}
-              >
-                <span className="indicator-check" />
-                <span>{indicator.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="indicator-stats-grid">
-          {indicatorStats.map((item) => (
-            <div key={item.label} className="indicator-stat-card">
-              <span>{item.label}</span>
-              <strong>{item.label.includes("EMA") || item.label.includes("Entry") || item.label.includes("Resistance")
-                ? formatPrice(item.value ?? null)
-                : formatNumber(item.value ?? null)}</strong>
-            </div>
-          ))}
-        </div>
-      </details>
     </div>
   );
 }
@@ -862,26 +761,11 @@ export default function DashboardClient({
     confirmation: false
   });
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const customEvent = event as CustomEvent<IndicatorKey>;
-      const key = customEvent.detail;
-      setActiveIndicators((current) => ({
-        ...current,
-        [key]: !current[key]
-      }));
-      setIndicatorsOpen(true);
-    };
-
-    window.addEventListener("toggle-indicator", handler as EventListener);
-    return () => {
-      window.removeEventListener("toggle-indicator", handler as EventListener);
-    };
-  }, []);
+  const topBuys = dashboard?.topBuys ?? [];
 
   const buySymbols = useMemo(
-    () => new Set((dashboard?.topBuys ?? []).map((item) => item.symbol)),
-    [dashboard]
+    () => new Set(topBuys.map((item) => item.symbol)),
+    [topBuys]
   );
 
   const fullList = useMemo(
@@ -891,11 +775,11 @@ export default function DashboardClient({
 
   const selectedListItem = useMemo(() => {
     return (
-      (dashboard?.topBuys ?? []).find((item) => item.symbol === selectedSymbol) ??
+      topBuys.find((item) => item.symbol === selectedSymbol) ??
       (markets?.items ?? []).find((item) => item.symbol === selectedSymbol) ??
       null
     );
-  }, [dashboard, markets, selectedSymbol]);
+  }, [topBuys, markets, selectedSymbol]);
 
   useEffect(() => {
     setSideError(null);
@@ -1020,9 +904,7 @@ export default function DashboardClient({
       const detailResponse = await getMarketDetail(nextSymbol);
       setDetailSeed(detailResponse);
     } catch (error) {
-      setBootstrapError(
-        error instanceof Error ? error.message : "Не удалось обновить кеш сигналов"
-      );
+      setBootstrapError(error instanceof Error ? error.message : "Не удалось обновить кеш сигналов");
       await reloadDetail();
     } finally {
       setBootstrapLoading(false);
@@ -1178,8 +1060,8 @@ export default function DashboardClient({
             </div>
 
             <div className="signal-list fill-scroll">
-              {(dashboard?.topBuys ?? []).length ? (
-                dashboard?.topBuys.map((item) => (
+              {topBuys.length ? (
+                topBuys.map((item) => (
                   <button
                     type="button"
                     key={item.symbol}
@@ -1252,9 +1134,7 @@ export default function DashboardClient({
                     : "Аналитика"}
               </h3>
 
-              {selectedListItem ? (
-                <span className="pill summary-pair-pill">{selectedListItem.pair}</span>
-              ) : null}
+              {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
             </div>
 
             {detailLoading || sideLoading ? <p>Загрузка данных...</p> : null}

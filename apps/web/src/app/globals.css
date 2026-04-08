@@ -240,7 +240,7 @@ button {
 
 .dashboard-middle-stack {
   display: grid;
-  grid-template-rows: 42% 58%;
+  grid-template-rows: 30% 70%;
   gap: 14px;
 }
 
@@ -253,8 +253,9 @@ button {
 
 .dashboard-right-stack {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
+  min-height: 0;
 }
 
 .fill-scroll {
@@ -381,6 +382,16 @@ button {
   align-items: center;
 }
 
+.dashboard-buy-card,
+.dashboard-full-card {
+  min-height: 0;
+}
+
+.signal-list {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .summary-pair-pill {
   background: rgba(47, 129, 247, 0.12);
   border-color: rgba(47, 129, 247, 0.22);
@@ -418,6 +429,8 @@ button {
   background: #0f1621;
   border-radius: 14px;
   padding: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .summary-text-block p {
@@ -432,6 +445,7 @@ button {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
+  flex: 0 0 auto;
 }
 
 .action-button {

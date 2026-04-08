@@ -1,6 +1,7 @@
 import express, { Response } from "express";
 import { env } from "./config/env";
 import { getBot } from "./bot/bot";
+import { forgetTelegramSubscriber, getTelegramSubscribers } from "./utils/telegram-subscribers";
 import {
   buildMarketContext,
   getCoinInfo,
@@ -21,6 +22,94 @@ import {
 import { getAllPionexSpotTickers } from "./services/pionex.service";
 
 const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+
+function formatUsd(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  if (value >= 1000) return `$${value.toFixed(2)}`;
+  if (value >= 1) return `$${value.toFixed(4)}`;
+  if (value >= 0.01) return `$${value.toFixed(6)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+function formatSignedPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function buildTelegramBuyNotification(result: BuyScanResult, mode: BuyScanMode): string | null {
+  if (!result.buys.length) {
+    return null;
+  }
+
+  const lines: string[] = [
+    `🟢 Обновлен кеш BUY-сигналов (${mode})`,
+    `Найдено сигналов: ${result.buys.length}`,
+    `Проверено рынков: ${result.summary.totalChecked}`,
+    ""
+  ];
+
+  for (const item of result.buys.slice(0, 3)) {
+    lines.push(
+      `${item.rank}. ${item.pair} — BUY`,
+      `Текущая цена: ${formatUsd(item.priceUsd)}`,
+      `Зона входа: ${formatUsd(item.entryFrom)} - ${formatUsd(item.entryTo)}`,
+      `Stop-loss: ${formatUsd(item.initialStopLoss)} (-${item.riskPercent.toFixed(2)}%)`,
+      `TP1: ${formatUsd(item.tp1)} (${formatSignedPercent(item.tp1Percent)})`,
+      `TP2: ${formatUsd(item.tp2)} (${formatSignedPercent(item.tp2Percent)})`,
+      `TP3: ${formatUsd(item.tp3)} (${formatSignedPercent(item.tp3Percent)})`,
+      `Сопровождение: ${item.managementPlan[0] ?? item.reason}`,
+      ""
+    );
+  }
+
+  lines.push(`Комментарий: ${result.summary.explanation}`);
+
+  return lines.join("\n").trim();
+}
+
+async function notifyTelegramSubscribersAboutBuys(result: BuyScanResult, mode: BuyScanMode) {
+  const text = buildTelegramBuyNotification(result, mode);
+
+  if (!text) {
+    return;
+  }
+
+  const subscribers = getTelegramSubscribers();
+  if (!subscribers.length) {
+    return;
+  }
+
+  let bot;
+
+  try {
+    bot = getBot();
+  } catch (error) {
+    console.error("Telegram notification skipped: bot unavailable", error);
+    return;
+  }
+
+  await Promise.all(
+    subscribers.map(async (subscriber) => {
+      try {
+        await bot.telegram.sendMessage(subscriber.chatId, text, {
+          link_preview_options: {
+            is_disabled: true
+          }
+        });
+      } catch (error) {
+        console.error(`Failed to send cache notification to chat ${subscriber.chatId}:`, error);
+        forgetTelegramSubscriber(subscriber.chatId);
+      }
+    })
+  );
+}
 
 const app = express();
 
@@ -121,6 +210,7 @@ async function warmBuySignalsCache(options?: {
     try {
       const result = await getBuyScanResult(limit, mode);
       setSharedBuyScanResult(result);
+      await notifyTelegramSubscribersAboutBuys(result, mode);
     } finally {
       setSharedBuyScanWarmupPromise(mode, null);
     }
@@ -510,6 +600,7 @@ let launchedBot: ReturnType<typeof getBot> | null = null;
 
   try {
     launchedBot = getBot();
+    await launchedBot.launch();
     await launchedBot.telegram.getMe();
     console.log("Telegram bot started");
   } catch (error) {

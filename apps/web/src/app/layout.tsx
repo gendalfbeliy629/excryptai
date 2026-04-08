@@ -25,7 +25,6 @@ export default function RootLayout({
 
               <nav className="nav">
                 <Link href="/dashboard">Dashboard</Link>
-                <Link href="/markets">Markets</Link>
               </nav>
             </div>
           </header>

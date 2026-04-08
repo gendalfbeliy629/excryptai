@@ -3,7 +3,5 @@
   "/_not-found/page": "/_not-found",
   "/backend/[...path]/route": "/backend/[...path]",
   "/dashboard/page": "/dashboard",
-  "/markets/[symbol]/page": "/markets/[symbol]",
-  "/markets/page": "/markets",
   "/page": "/"
 }

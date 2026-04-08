@@ -3,7 +3,5 @@
   "/_not-found/page": "app/_not-found/page.js",
   "/backend/[...path]/route": "app/backend/[...path]/route.js",
   "/dashboard/page": "app/dashboard/page.js",
-  "/markets/[symbol]/page": "app/markets/[symbol]/page.js",
-  "/markets/page": "app/markets/page.js",
   "/page": "app/page.js"
 }

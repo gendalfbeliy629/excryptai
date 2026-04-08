@@ -29,14 +29,6 @@
         "nxtPpath": "nxtPpath"
       },
       "namedRegex": "^/backend/(?<nxtPpath>.+?)(?:/)?$"
-    },
-    {
-      "page": "/markets/[symbol]",
-      "regex": "^/markets/([^/]+?)(?:/)?$",
-      "routeKeys": {
-        "nxtPsymbol": "nxtPsymbol"
-      },
-      "namedRegex": "^/markets/(?<nxtPsymbol>[^/]+?)(?:/)?$"
     }
   ],
   "staticRoutes": [
@@ -63,12 +55,6 @@
       "regex": "^/dashboard(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/dashboard(?:/)?$"
-    },
-    {
-      "page": "/markets",
-      "regex": "^/markets(?:/)?$",
-      "routeKeys": {},
-      "namedRegex": "^/markets(?:/)?$"
     }
   ],
   "dataRoutes": [],

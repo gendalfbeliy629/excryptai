@@ -5,6 +5,7 @@ import { registerPriceHandler } from "./handlers/price";
 import { registerAIHandler } from "./handlers/ai";
 import { registerBuyHandler } from "./handlers/buy";
 import { registerInfoHandler } from "./handlers/info";
+import { rememberTelegramSubscriber } from "../utils/telegram-subscribers";
 
 let botInstance: Telegraf | null = null;
 
@@ -18,6 +19,20 @@ export function getBot(): Telegraf {
   }
 
   const bot = new Telegraf(env.TELEGRAM_BOT_TOKEN);
+
+  bot.use(async (ctx, next) => {
+    if (ctx.chat) {
+      rememberTelegramSubscriber({
+        chatId: ctx.chat.id,
+        type: ctx.chat.type,
+        title: "title" in ctx.chat ? ctx.chat.title : undefined,
+        username: "username" in ctx.chat ? ctx.chat.username : undefined,
+        firstName: "first_name" in ctx.chat ? ctx.chat.first_name : undefined
+      });
+    }
+
+    return next();
+  });
 
   registerStartHandler(bot);
   registerPriceHandler(bot);
