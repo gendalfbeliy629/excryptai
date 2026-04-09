@@ -275,7 +275,9 @@ async function warmBuySignalsCache(options?: {
       await setSharedBuyScanResult(result);
       await notifyTelegramSubscribersAboutBuys(result, mode);
     } finally {
-      await releaseLock(`buy-warmup-lock:${mode}`, lockToken);
+      if (lockToken) {
+        await releaseLock(`buy-warmup-lock:${mode}`, lockToken);
+      }
       await setSharedBuyScanStatus(mode, {
         warming: false
       });
@@ -355,7 +357,9 @@ async function warmDashboardCache(options?: {
       const data = await buildDashboardData(mode);
       await setSharedDashboardResult(mode, data, data.generatedAt);
     } finally {
-      await releaseLock(`dashboard-warmup-lock:${mode}`, lockToken);
+      if (lockToken) {
+        await releaseLock(`dashboard-warmup-lock:${mode}`, lockToken);
+      }
       await setSharedDashboardStatus(mode, {
         warming: false
       });

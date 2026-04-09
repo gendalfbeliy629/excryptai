@@ -14,6 +14,8 @@ const memoryStore = new Map<string, MemoryEntry>();
 let redisClient: AppRedisClient | null = null;
 let connectPromise: Promise<AppRedisClient | null> | null = null;
 let connectionLogged = false;
+let startupConfigLogged = false;
+let memoryFallbackLogged = false;
 
 function getMemoryEntry(key: string): MemoryEntry | null {
   const entry = memoryStore.get(key) ?? null;
@@ -29,12 +31,69 @@ function getMemoryEntry(key: string): MemoryEntry | null {
   return entry;
 }
 
+function maskRedisUrl(redisUrl: string | undefined): string {
+  if (!redisUrl) {
+    return "<empty>";
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+
+    if (parsed.username) {
+      parsed.username = "***";
+    }
+
+    if (parsed.password) {
+      parsed.password = "***";
+    }
+
+    return parsed.toString();
+  } catch {
+    return "<invalid redis url>";
+  }
+}
+
+function getRedisDbLabel(redisUrl: string | undefined): string {
+  if (!redisUrl) {
+    return "default";
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+    const db = parsed.pathname.replace(/^\//, "");
+    return db || "default";
+  } catch {
+    return "unknown";
+  }
+}
+
+function logRedisStartupConfig(): void {
+  if (startupConfigLogged) {
+    return;
+  }
+
+  startupConfigLogged = true;
+
+  console.log("[redis] startup config", {
+    enabled: env.REDIS_ENABLED,
+    hasRedisUrl: Boolean(env.REDIS_URL),
+    redisUrlMasked: maskRedisUrl(env.REDIS_URL),
+    redisDb: getRedisDbLabel(env.REDIS_URL)
+  });
+}
+
 export function isRedisEnabled(): boolean {
   return env.REDIS_ENABLED && Boolean(env.REDIS_URL);
 }
 
 export async function connectRedis(): Promise<AppRedisClient | null> {
+  logRedisStartupConfig();
+
   if (!isRedisEnabled()) {
+    if (!memoryFallbackLogged) {
+      console.log("[redis] disabled or REDIS_URL is empty, using in-memory cache");
+      memoryFallbackLogged = true;
+    }
     return null;
   }
 
@@ -48,6 +107,11 @@ export async function connectRedis(): Promise<AppRedisClient | null> {
 
   connectPromise = (async (): Promise<AppRedisClient | null> => {
     try {
+      console.log("[redis] connecting", {
+        redisUrlMasked: maskRedisUrl(env.REDIS_URL),
+        redisDb: getRedisDbLabel(env.REDIS_URL)
+      });
+
       const client = createClient({
         url: env.REDIS_URL,
         socket: {
@@ -70,7 +134,10 @@ export async function connectRedis(): Promise<AppRedisClient | null> {
       redisClient = client;
 
       if (!connectionLogged) {
-        console.log("Redis connected");
+        console.log("[redis] connected", {
+          redisUrlMasked: maskRedisUrl(env.REDIS_URL),
+          redisDb: getRedisDbLabel(env.REDIS_URL)
+        });
         connectionLogged = true;
       }
 
@@ -215,11 +282,7 @@ export async function acquireLock(key: string, ttlMs: number): Promise<string | 
   return token;
 }
 
-export async function releaseLock(key: string, token: string | null): Promise<void> {
-  if (!token) {
-    return;
-  }
-
+export async function releaseLock(key: string, token: string): Promise<void> {
   const client = await connectRedis();
 
   if (client?.isOpen) {
