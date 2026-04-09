@@ -12,6 +12,8 @@ export type Candle = {
   high: number;
   low: number;
   close: number;
+  volume: number;
+  quoteVolume: number;
   volumeFrom?: number;
   volumeTo?: number;
 };
@@ -133,6 +135,7 @@ export type MarketDetail = {
       baseSymbol: string;
       quoteSymbol: string;
       display: string;
+      historySource?: "CRYPTOCOMPARE";
     };
     spot: {
       priceUsd: number | null;
@@ -154,6 +157,18 @@ export type MarketDetail = {
       macdHistogram: number | null;
       trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
       candles: Candle[];
+      intraday1m?: {
+        candles: Candle[];
+      };
+      intraday5m?: {
+        candles: Candle[];
+      };
+      intraday15m?: {
+        candles: Candle[];
+      };
+      intraday30m?: {
+        candles: Candle[];
+      };
       intraday1h?: {
         candles: Candle[];
         rsi14: number | null;

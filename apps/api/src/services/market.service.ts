@@ -1,4 +1,5 @@
 import { getSpotPrice } from "./coincap.service";
+import { getCryptoCompareCandles } from "./cryptocompare.service";
 import {
   getOrderBookNotional,
   getPionexDepth,
@@ -19,6 +20,8 @@ export type OHLCItem = {
   high: number;
   low: number;
   close: number;
+  volume: number;
+  quoteVolume: number;
   volumeFrom?: number;
   volumeTo?: number;
 };
@@ -50,6 +53,7 @@ export type MarketContext = {
     quoteSymbol: string;
     display: string;
     exchange: "PIONEX";
+    historySource: "CRYPTOCOMPARE";
   };
   spot: {
     price: number;
@@ -73,6 +77,18 @@ export type MarketContext = {
     macdHistogram: number | null;
     trend30d: TrendType;
     candles: OHLCItem[];
+    intraday1m: {
+      candles: OHLCItem[];
+    };
+    intraday5m: {
+      candles: OHLCItem[];
+    };
+    intraday15m: {
+      candles: OHLCItem[];
+    };
+    intraday30m: {
+      candles: OHLCItem[];
+    };
     intraday1h: {
       candles: OHLCItem[];
       rsi14: number | null;
@@ -138,6 +154,7 @@ export type BuildMarketContextOptions = {
   ticker?: PionexTicker;
   bookTicker?: PionexBookTicker | null;
   depth?: PionexDepth | null;
+  includeExtendedIntradayCandles?: boolean;
 };
 
 const STABLE_QUOTES = new Set([
@@ -211,6 +228,8 @@ function toOHLC(
     high: row.high,
     low: row.low,
     close: row.close,
+    volume: row.volume,
+    quoteVolume: row.amount,
     volumeFrom: row.volume,
     volumeTo: row.amount,
   }));
@@ -610,9 +629,11 @@ export async function getOHLC(
 ): Promise<OHLCItem[]> {
   const baseSymbol = normalizeSymbol(symbolInput);
   const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
-  const candles = await getPionexKlines(baseSymbol, quoteSymbol, "1D", Math.max(limit, 35));
+  const candles = await getCryptoCompareCandles(baseSymbol, quoteSymbol, "1D", Math.max(limit, 35));
 
-  return toOHLC(candles).slice(-limit);
+  return candles
+    .map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }))
+    .slice(-limit);
 }
 
 export async function getCandles(
@@ -647,11 +668,25 @@ export async function buildMarketContext(
   const liquidityPromise = getLiquiditySnapshot(baseSymbol).catch(() => fallbackLiquidity());
   const sentimentPromise = getSentimentSnapshot(baseSymbol).catch(() => fallbackSentiment());
 
-  const [dailyRaw, candles1hRaw, candles4hRaw, depth, assetSpot, quoteUsdPrice, liquidity, sentiment] =
+  const includeExtendedIntradayCandles = options.includeExtendedIntradayCandles ?? true;
+
+  const [dailyRaw, candles1hRaw, candles4hRaw, candles1mRaw, candles5mRaw, candles15mRaw, candles30mRaw, depth, assetSpot, quoteUsdPrice, liquidity, sentiment] =
     await Promise.all([
-      getPionexKlines(baseSymbol, quoteSymbol, "1D", 370),
-      getPionexKlines(baseSymbol, quoteSymbol, "60M", 140),
-      getPionexKlines(baseSymbol, quoteSymbol, "4H", 140),
+      getCryptoCompareCandles(baseSymbol, quoteSymbol, "1D", 365),
+      getCryptoCompareCandles(baseSymbol, quoteSymbol, "1H", 24 * 30),
+      getCryptoCompareCandles(baseSymbol, quoteSymbol, "4H", 6 * 365),
+      includeExtendedIntradayCandles
+        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "1m", 1440)
+        : Promise.resolve([]),
+      includeExtendedIntradayCandles
+        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "5m", 2000)
+        : Promise.resolve([]),
+      includeExtendedIntradayCandles
+        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "15m", 2000)
+        : Promise.resolve([]),
+      includeExtendedIntradayCandles
+        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "30m", 2000)
+        : Promise.resolve([]),
       depthPromise,
       assetSpotPromise,
       quoteUsdPromise,
@@ -675,17 +710,24 @@ export async function buildMarketContext(
         close: last.close,
         high: last.high,
         low: last.low,
-        volume: last.volume,
-        amount: last.amount,
+        volume: last.volumeFrom,
+        amount: last.volumeTo,
         count: null,
-        changePercent24h: null,
+        changePercent24h:
+          candles1hRaw.length >= 24
+            ? calculatePercentChange(candles1hRaw[candles1hRaw.length - 24]?.close ?? last.open, last.close)
+            : null,
         time: last.time,
       } as PionexTicker;
     })();
 
-  const candles = toOHLC(dailyRaw);
-  const candles1h = toOHLC(candles1hRaw);
-  const candles4h = toOHLC(candles4hRaw);
+  const candles = dailyRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles1h = candles1hRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles4h = candles4hRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles1m = candles1mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles5m = candles5mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles15m = candles15mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles30m = candles30mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
 
   if (candles.length < 30) {
     throw new Error(`Not enough daily candles for ${baseSymbol}/${quoteSymbol}`);
@@ -787,6 +829,7 @@ export async function buildMarketContext(
       quoteSymbol,
       display: `${baseSymbol}/${quoteSymbol}`,
       exchange: "PIONEX",
+      historySource: "CRYPTOCOMPARE",
     },
     spot: {
       price,
@@ -810,6 +853,18 @@ export async function buildMarketContext(
       macdHistogram: dailyMacd.histogram,
       trend30d,
       candles,
+      intraday1m: {
+        candles: candles1m,
+      },
+      intraday5m: {
+        candles: candles5m,
+      },
+      intraday15m: {
+        candles: candles15m,
+      },
+      intraday30m: {
+        candles: candles30m,
+      },
       intraday1h: {
         candles: candles1h,
         rsi14: rsi14_1h,

@@ -200,7 +200,7 @@ async function getDashboardBuyScanResult(
 
 async function buildMarketListItem(symbol: string, volume24h = 0): Promise<MarketListItem | null> {
   try {
-    const market = await buildMarketContext(symbol, "USDT");
+    const market = await buildMarketContext(symbol, "USDT", { includeExtendedIntradayCandles: false });
     const evaluation = evaluateMarketSignal(market);
 
     if (!evaluation) {

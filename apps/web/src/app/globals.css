@@ -629,6 +629,32 @@ button {
   color: #7f95b5;
 }
 
+.tv-hover-volume {
+  color: #9db1cf;
+}
+
+.tv-footer-controls {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tv-auto-toggle {
+  border: 1px solid #243041;
+  background: #0f1621;
+  color: #8ea3c1;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+
+.tv-auto-toggle.active {
+  background: #1a2331;
+  color: #ffffff;
+  border-color: #3a7bd5;
+}
+
 .chart-svg-wrap {
   min-height: 0;
   flex: 1 1 auto;

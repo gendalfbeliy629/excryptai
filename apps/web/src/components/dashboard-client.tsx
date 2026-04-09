@@ -260,14 +260,19 @@ function aggregateCandles(candles: Candle[], bucketSize: number): Candle[] {
     const bucket = candles.slice(index, index + bucketSize);
     if (!bucket.length) continue;
 
+    const volumeFrom = bucket.reduce((sum, item) => sum + (item.volumeFrom ?? item.volume ?? 0), 0);
+    const volumeTo = bucket.reduce((sum, item) => sum + (item.volumeTo ?? item.quoteVolume ?? 0), 0);
+
     result.push({
       time: bucket[0].time,
       open: bucket[0].open,
       high: Math.max(...bucket.map((item) => item.high)),
       low: Math.min(...bucket.map((item) => item.low)),
       close: bucket[bucket.length - 1].close,
-      volumeFrom: bucket.reduce((sum, item) => sum + (item.volumeFrom ?? 0), 0),
-      volumeTo: bucket.reduce((sum, item) => sum + (item.volumeTo ?? 0), 0)
+      volume: volumeFrom,
+      quoteVolume: volumeTo,
+      volumeFrom,
+      volumeTo
     });
   }
 
@@ -328,17 +333,20 @@ function lineY(value: number, min: number, max: number, top: number, height: num
 function getChartCandles(detail: MarketDetail | null, interval: ChartInterval): Candle[] {
   if (!detail) return [];
 
+  const intraday1m = detail.market.technicals.intraday1m?.candles ?? [];
+  const intraday5m = detail.market.technicals.intraday5m?.candles ?? [];
+  const intraday15m = detail.market.technicals.intraday15m?.candles ?? [];
+  const intraday30m = detail.market.technicals.intraday30m?.candles ?? [];
   const intraday1h = detail.market.technicals.intraday1h?.candles ?? [];
   const intraday4h = detail.market.technicals.intraday4h?.candles ?? [];
   const daily = detail.market.technicals.candles ?? [];
 
-  if (interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m" || interval === "1H") {
-    return intraday1h;
-  }
-
-  if (interval === "4H") {
-    return intraday4h;
-  }
+  if (interval === "1m") return intraday1m;
+  if (interval === "5m") return intraday5m;
+  if (interval === "15m") return intraday15m;
+  if (interval === "30m") return intraday30m;
+  if (interval === "1H") return intraday1h;
+  if (interval === "4H") return intraday4h;
 
   if (interval === "1W") {
     return aggregateCandles(daily, 7);
@@ -352,30 +360,58 @@ function getChartCandles(detail: MarketDetail | null, interval: ChartInterval): 
 }
 
 function getEffectiveInterval(interval: ChartInterval): ChartInterval {
-  if (interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m") {
-    return "1H";
-  }
-
   return interval;
 }
 
 function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): number {
   const effectiveInterval = getEffectiveInterval(interval);
 
+  if (effectiveInterval === "1m") {
+    if (windowValue === "1D") return 24 * 60;
+    if (windowValue === "1W") return 24 * 60;
+    if (windowValue === "1M") return 24 * 60;
+    if (windowValue === "1Y") return 24 * 60;
+    return 24 * 60;
+  }
+
+  if (effectiveInterval === "5m") {
+    if (windowValue === "1D") return 12 * 24;
+    if (windowValue === "1W") return 12 * 24 * 7;
+    if (windowValue === "1M") return 2000;
+    if (windowValue === "1Y") return 2000;
+    return 2000;
+  }
+
+  if (effectiveInterval === "15m") {
+    if (windowValue === "1D") return 4 * 24;
+    if (windowValue === "1W") return 4 * 24 * 7;
+    if (windowValue === "1M") return 4 * 24 * 30;
+    if (windowValue === "1Y") return 2000;
+    return 2000;
+  }
+
+  if (effectiveInterval === "30m") {
+    if (windowValue === "1D") return 2 * 24;
+    if (windowValue === "1W") return 2 * 24 * 7;
+    if (windowValue === "1M") return 2 * 24 * 30;
+    if (windowValue === "1Y") return 1440;
+    return 2000;
+  }
+
   if (effectiveInterval === "1H") {
     if (windowValue === "1D") return 24;
     if (windowValue === "1W") return 24 * 7;
     if (windowValue === "1M") return 24 * 30;
-    if (windowValue === "1Y") return 24 * 30;
-    return 24 * 30;
+    if (windowValue === "1Y") return 24 * 365;
+    return 2000;
   }
 
   if (effectiveInterval === "4H") {
     if (windowValue === "1D") return 6;
     if (windowValue === "1W") return 42;
     if (windowValue === "1M") return 180;
-    if (windowValue === "1Y") return 180;
-    return 180;
+    if (windowValue === "1Y") return 6 * 365;
+    return 2000;
   }
 
   if (effectiveInterval === "1D") {
@@ -443,6 +479,16 @@ function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSy
     void loadDetail(selectedSymbol);
   }, [initialDetail, initialSelectedSymbol, selectedSymbol]);
 
+  useEffect(() => {
+    if (!selectedSymbol) return;
+
+    const timerId = window.setInterval(() => {
+      void loadDetail(selectedSymbol);
+    }, 60_000);
+
+    return () => window.clearInterval(timerId);
+  }, [selectedSymbol]);
+
   return {
     selectedSymbol,
     setSelectedSymbol,
@@ -482,6 +528,7 @@ function TradingChart({
   const [zoomFactor, setZoomFactor] = useState(1);
   const [startIndex, setStartIndex] = useState(0);
   const [clockText, setClockText] = useState("");
+  const [autoScroll, setAutoScroll] = useState(true);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const effectiveInterval = useMemo(() => getEffectiveInterval(interval), [interval]);
@@ -498,7 +545,7 @@ function TradingChart({
         hour12: false
       }).format(now);
 
-      setClockText(`${datePart} ${resolveUtcOffsetLabel(now)}`);
+      setClockText(`${datePart} (${resolveUtcOffsetLabel(now)})`);
     };
 
     updateClock();
@@ -541,6 +588,12 @@ function TradingChart({
   }, [maxStartIndex, interval, windowValue, detail?.market.asset.symbol]);
 
   useEffect(() => {
+    if (autoScroll) {
+      setStartIndex(maxStartIndex);
+    }
+  }, [autoScroll, maxStartIndex, allCandles.length]);
+
+  useEffect(() => {
     setStartIndex((current) => Math.max(0, Math.min(maxStartIndex, current)));
   }, [maxStartIndex]);
 
@@ -550,7 +603,7 @@ function TradingChart({
   );
 
   const closes = candles.map((item) => item.close);
-  const volumes = candles.map((item) => item.volumeTo ?? item.volumeFrom ?? 0);
+  const volumes = candles.map((item) => item.volume ?? item.volumeFrom ?? 0);
   const ema20 = calculateEMA(closes, 20);
   const ema50 = calculateEMA(closes, 50);
   const rsi14 = calculateRSI(closes, 14);
@@ -560,7 +613,7 @@ function TradingChart({
   const left = 18;
   const right = 86;
   const top = 18;
-  const priceHeight = 390;
+  const priceHeight = 360;
   const volumeHeight = 90;
   const rsiHeight = activeIndicators.rsi ? 90 : 0;
   const macdHeight = activeIndicators.macd ? 96 : 0;
@@ -772,6 +825,8 @@ function TradingChart({
         <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>H {formatPrice(hoveredCandle?.high ?? null)}</span>
         <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>L {formatPrice(hoveredCandle?.low ?? null)}</span>
         <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>C {formatPrice(hoveredCandle?.close ?? null)}</span>
+        <span className="tv-hover-volume">Volume {formatNumber(hoveredCandle?.volume ?? hoveredCandle?.volumeFrom ?? null)}</span>
+        <span className="tv-hover-volume">Quote {formatNumber(hoveredCandle?.quoteVolume ?? hoveredCandle?.volumeTo ?? null)}</span>
       </div>
 
       <div className="chart-svg-wrap tradingview-shell">
@@ -821,6 +876,7 @@ function TradingChart({
           <line x1={left} y1={chartBottom} x2={width - right} y2={chartBottom} className="tv-axis-line" />
 
           <text x={left} y={volumeTop - 6} className="tv-pane-title">Volume</text>
+          <text x={width - right} y={volumeTop - 6} textAnchor="end" className="tv-pane-title">base / quote</text>
 
           {candles.map((candle, index) => {
             const cx = x(index);
@@ -882,7 +938,7 @@ function TradingChart({
             : null}
 
           {candles.map((candle, index) => {
-            const volume = candle.volumeTo ?? candle.volumeFrom ?? 0;
+            const volume = candle.volume ?? candle.volumeFrom ?? 0;
             const barHeight = (volume / maxVolume) * volumeHeight;
             const barY = volumeTop + volumeHeight - barHeight;
             const cx = x(index);
@@ -959,6 +1015,16 @@ function TradingChart({
             </text>
           </g>
         </svg>
+      </div>
+
+      <div className="tv-footer-controls">
+        <button
+          type="button"
+          className={autoScroll ? "tv-auto-toggle active" : "tv-auto-toggle"}
+          onClick={() => setAutoScroll((current) => !current)}
+        >
+          auto
+        </button>
       </div>
     </div>
   );
