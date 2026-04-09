@@ -601,9 +601,9 @@ button {
 }
 
 .tv-hover-card {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
   padding: 6px;
   border-radius: 12px;
@@ -611,6 +611,20 @@ button {
   background: #0f1621;
   color: #c7d4ea;
   font-size: 12px;
+}
+
+.tv-hover-card-main {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.tv-hover-card-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .tv-hover-date {
@@ -631,11 +645,6 @@ button {
 
 .tv-hover-volume {
   color: #9db1cf;
-}
-
-.tv-footer-controls {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .tv-auto-toggle {
@@ -663,6 +672,22 @@ button {
   overflow: hidden;
   border: 1px solid #1e2a39;
   background: #0b1119;
+  position: relative;
+}
+
+.tv-history-loader {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #243041;
+  background: rgba(15, 22, 33, 0.92);
+  color: #9db1cf;
+  font-size: 11px;
+  pointer-events: none;
 }
 
 .chart-svg {

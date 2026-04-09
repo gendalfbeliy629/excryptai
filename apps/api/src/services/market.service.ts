@@ -1,11 +1,11 @@
 import { getSpotPrice } from "./coincap.service";
-import { getCryptoCompareCandles } from "./cryptocompare.service";
 import {
   getOrderBookNotional,
   getPionexDepth,
   getPionexKlines,
   PionexBookTicker,
   PionexDepth,
+  PionexInterval,
   PionexTicker,
 } from "./pionex.service";
 import { getLiquiditySnapshot } from "./defillama.service";
@@ -53,7 +53,7 @@ export type MarketContext = {
     quoteSymbol: string;
     display: string;
     exchange: "PIONEX";
-    historySource: "CRYPTOCOMPARE";
+    historySource: "PIONEX";
   };
   spot: {
     price: number;
@@ -618,8 +618,53 @@ export async function getCoinInfo(symbolInput: string): Promise<CoinInfo> {
     change24h: null,
     marketCapUsd: assetSpot?.marketCapUsd ?? null,
     volume24hUsd: null,
-    source: "Pionex",
+    source: "PIONEX",
   };
+}
+
+function mapPionexCandlesToOhlc(candles: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number; amount: number; }>): OHLCItem[] {
+  return candles.map((item) => ({
+    time: item.time,
+    open: item.open,
+    high: item.high,
+    low: item.low,
+    close: item.close,
+    volume: item.volume,
+    quoteVolume: item.amount,
+    volumeFrom: item.volume,
+    volumeTo: item.amount,
+  }));
+}
+
+function mapChartIntervalToPionexInterval(interval: "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D"): PionexInterval {
+  if (interval === "1m") return "1M";
+  if (interval === "5m") return "5M";
+  if (interval === "15m") return "15M";
+  if (interval === "30m") return "30M";
+  if (interval === "1H") return "60M";
+  if (interval === "4H") return "4H";
+  return "1D";
+}
+
+export async function getPairCandles(
+  symbolInput: string,
+  interval: "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" = "1D",
+  limit = 200,
+  quoteSymbolInput = "USDT",
+  endTime?: number
+): Promise<OHLCItem[]> {
+  const baseSymbol = normalizeSymbol(symbolInput);
+  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
+  const pionexInterval = mapChartIntervalToPionexInterval(interval);
+  const candles = await getPionexKlines(
+    baseSymbol,
+    quoteSymbol,
+    pionexInterval,
+    Math.max(1, Math.min(limit, 500)),
+    endTime
+  );
+
+  return mapPionexCandlesToOhlc(candles);
 }
 
 export async function getOHLC(
@@ -627,13 +672,7 @@ export async function getOHLC(
   limit = 30,
   quoteSymbolInput = "USDT"
 ): Promise<OHLCItem[]> {
-  const baseSymbol = normalizeSymbol(symbolInput);
-  const quoteSymbol = normalizeQuoteSymbol(quoteSymbolInput);
-  const candles = await getCryptoCompareCandles(baseSymbol, quoteSymbol, "1D", Math.max(limit, 35));
-
-  return candles
-    .map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }))
-    .slice(-limit);
+  return getPairCandles(symbolInput, "1D", limit, quoteSymbolInput);
 }
 
 export async function getCandles(
@@ -672,20 +711,20 @@ export async function buildMarketContext(
 
   const [dailyRaw, candles1hRaw, candles4hRaw, candles1mRaw, candles5mRaw, candles15mRaw, candles30mRaw, depth, assetSpot, quoteUsdPrice, liquidity, sentiment] =
     await Promise.all([
-      getCryptoCompareCandles(baseSymbol, quoteSymbol, "1D", 365),
-      getCryptoCompareCandles(baseSymbol, quoteSymbol, "1H", 24 * 30),
-      getCryptoCompareCandles(baseSymbol, quoteSymbol, "4H", 6 * 365),
+      getPairCandles(baseSymbol, "1D", 365, quoteSymbol),
+      getPairCandles(baseSymbol, "1H", 500, quoteSymbol),
+      getPairCandles(baseSymbol, "4H", 500, quoteSymbol),
       includeExtendedIntradayCandles
-        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "1m", 1440)
+        ? getPairCandles(baseSymbol, "1m", 500, quoteSymbol)
         : Promise.resolve([]),
       includeExtendedIntradayCandles
-        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "5m", 2000)
+        ? getPairCandles(baseSymbol, "5m", 500, quoteSymbol)
         : Promise.resolve([]),
       includeExtendedIntradayCandles
-        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "15m", 2000)
+        ? getPairCandles(baseSymbol, "15m", 500, quoteSymbol)
         : Promise.resolve([]),
       includeExtendedIntradayCandles
-        ? getCryptoCompareCandles(baseSymbol, quoteSymbol, "30m", 2000)
+        ? getPairCandles(baseSymbol, "30m", 500, quoteSymbol)
         : Promise.resolve([]),
       depthPromise,
       assetSpotPromise,
@@ -710,8 +749,8 @@ export async function buildMarketContext(
         close: last.close,
         high: last.high,
         low: last.low,
-        volume: last.volumeFrom,
-        amount: last.volumeTo,
+        volume: last.volume ?? last.volumeFrom ?? 0,
+        amount: last.quoteVolume ?? last.volumeTo ?? 0,
         count: null,
         changePercent24h:
           candles1hRaw.length >= 24
@@ -721,13 +760,13 @@ export async function buildMarketContext(
       } as PionexTicker;
     })();
 
-  const candles = dailyRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles1h = candles1hRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles4h = candles4hRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles1m = candles1mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles5m = candles5mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles15m = candles15mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
-  const candles30m = candles30mRaw.map((item) => ({ ...item, volume: item.volumeFrom, quoteVolume: item.volumeTo }));
+  const candles = dailyRaw;
+  const candles1h = candles1hRaw;
+  const candles4h = candles4hRaw;
+  const candles1m = candles1mRaw;
+  const candles5m = candles5mRaw;
+  const candles15m = candles15mRaw;
+  const candles30m = candles30mRaw;
 
   if (candles.length < 30) {
     throw new Error(`Not enough daily candles for ${baseSymbol}/${quoteSymbol}`);
@@ -829,7 +868,7 @@ export async function buildMarketContext(
       quoteSymbol,
       display: `${baseSymbol}/${quoteSymbol}`,
       exchange: "PIONEX",
-      historySource: "CRYPTOCOMPARE",
+      historySource: "PIONEX",
     },
     spot: {
       price,

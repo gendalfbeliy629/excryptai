@@ -351,17 +351,26 @@ export async function getPionexKlines(
   baseSymbol: string,
   quoteSymbol: string,
   interval: PionexInterval,
-  limit: number
+  limit: number,
+  endTime?: number
 ): Promise<PionexCandle[]> {
   const symbol = `${baseSymbol}_${quoteSymbol}`;
-  const key = cacheKey(["pionex", "klines", symbol, interval, limit]);
+  const normalizedLimit = Math.max(1, Math.min(limit, 500));
+  const normalizedEndTime = typeof endTime === "number" && Number.isFinite(endTime) ? Math.floor(endTime) : "latest";
+  const key = cacheKey(["pionex", "klines", symbol, interval, normalizedLimit, normalizedEndTime]);
 
   return getCached(key, 60_000, async () => {
-    const payload = await requestWithLimiter<any>("/klines", {
+    const params: Record<string, unknown> = {
       symbol,
       interval,
-      limit: Math.max(1, Math.min(limit, 500)),
-    });
+      limit: normalizedLimit,
+    };
+
+    if (typeof endTime === "number" && Number.isFinite(endTime)) {
+      params.endTime = Math.floor(endTime);
+    }
+
+    const payload = await requestWithLimiter<any>("/klines", params);
 
     const rows = unwrapArrayPayload(payload, ["klines", "items", "data"]);
 

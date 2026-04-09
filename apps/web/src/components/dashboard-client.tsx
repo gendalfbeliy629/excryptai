@@ -9,6 +9,7 @@ import {
   getDashboardBootstrapStatus,
   getDashboardData,
   getInfoCard,
+  getMarketCandles,
   getMarketDetail,
   getMarkets,
   InfoResponse,
@@ -47,6 +48,29 @@ type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
+type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
+
+function resolveFetchInterval(interval: ChartInterval): FetchableChartInterval {
+  if (interval === "1W" || interval === "1M") return "1D";
+  return interval;
+}
+
+function mergeCandlesChronologically(current: Candle[], incoming: Candle[]): Candle[] {
+  const merged = [...current, ...incoming].sort((a, b) => a.time - b.time);
+  const unique: Candle[] = [];
+
+  for (const candle of merged) {
+    const last = unique[unique.length - 1];
+    if (last && last.time === candle.time) {
+      unique[unique.length - 1] = candle;
+      continue;
+    }
+
+    unique.push(candle);
+  }
+
+  return unique;
+}
 
 const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "ema20", label: "EMA 20" },
@@ -532,8 +556,21 @@ function TradingChart({
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const effectiveInterval = useMemo(() => getEffectiveInterval(interval), [interval]);
-  const allCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
+  const fetchInterval = useMemo(() => resolveFetchInterval(interval), [interval]);
+  const initialCandles = useMemo(() => getChartCandles(detail, interval), [detail, interval]);
+  const [loadedCandles, setLoadedCandles] = useState<Candle[]>(initialCandles);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const pendingOlderRequestRef = useRef(false);
   const baseVisibleCount = getWindowCount(interval, windowValue);
+
+  useEffect(() => {
+    setLoadedCandles(initialCandles);
+    setHasMoreOlder(initialCandles.length >= Math.min(500, Math.max(50, baseVisibleCount)));
+    setLoadingOlder(false);
+    pendingOlderRequestRef.current = false;
+    setHoverIndex(null);
+  }, [initialCandles, baseVisibleCount, detail?.market.pair.display, interval]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -576,12 +613,12 @@ function TradingChart({
   }, [interval, windowValue, detail?.market.asset.symbol]);
 
   const visibleCount = useMemo(() => {
-    if (!allCandles.length) return 0;
+    if (!loadedCandles.length) return 0;
     const rawCount = Math.round(baseVisibleCount / zoomFactor);
-    return Math.max(12, Math.min(allCandles.length, rawCount));
-  }, [allCandles.length, baseVisibleCount, zoomFactor]);
+    return Math.max(12, Math.min(loadedCandles.length, rawCount));
+  }, [loadedCandles.length, baseVisibleCount, zoomFactor]);
 
-  const maxStartIndex = Math.max(0, allCandles.length - visibleCount);
+  const maxStartIndex = Math.max(0, loadedCandles.length - visibleCount);
 
   useEffect(() => {
     setStartIndex(maxStartIndex);
@@ -591,16 +628,54 @@ function TradingChart({
     if (autoScroll) {
       setStartIndex(maxStartIndex);
     }
-  }, [autoScroll, maxStartIndex, allCandles.length]);
+  }, [autoScroll, maxStartIndex, loadedCandles.length]);
 
   useEffect(() => {
     setStartIndex((current) => Math.max(0, Math.min(maxStartIndex, current)));
   }, [maxStartIndex]);
 
   const candles = useMemo(
-    () => allCandles.slice(startIndex, startIndex + visibleCount),
-    [allCandles, startIndex, visibleCount]
+    () => loadedCandles.slice(startIndex, startIndex + visibleCount),
+    [loadedCandles, startIndex, visibleCount]
   );
+
+  useEffect(() => {
+    const shouldLoadOlder =
+      !loadingOlder &&
+      hasMoreOlder &&
+      loadedCandles.length > 0 &&
+      startIndex <= Math.max(8, Math.floor(visibleCount * 0.2));
+
+    if (!shouldLoadOlder || pendingOlderRequestRef.current || !detail?.market.pair.display) {
+      return;
+    }
+
+    pendingOlderRequestRef.current = true;
+    setLoadingOlder(true);
+
+    const beforeTime = loadedCandles[0]?.time ? loadedCandles[0].time - 1 : undefined;
+
+    void getMarketCandles(detail.market.pair.display, fetchInterval, Math.min(200, Math.max(120, visibleCount)), beforeTime)
+      .then((response) => {
+        const olderCandles = response.candles.filter((item) => item.time < (loadedCandles[0]?.time ?? Number.MAX_SAFE_INTEGER));
+
+        if (!olderCandles.length) {
+          setHasMoreOlder(false);
+          return;
+        }
+
+        setLoadedCandles((current) => mergeCandlesChronologically(current, olderCandles));
+        setStartIndex((current) => current + olderCandles.length);
+        setHasMoreOlder(response.hasMore && olderCandles.length > 0);
+      })
+      .catch(() => {
+        setHasMoreOlder(false);
+      })
+      .finally(() => {
+        pendingOlderRequestRef.current = false;
+        setLoadingOlder(false);
+      });
+  }, [detail?.market.pair.display, fetchInterval, hasMoreOlder, loadedCandles, loadingOlder, startIndex, visibleCount]);
 
   const closes = candles.map((item) => item.close);
   const volumes = candles.map((item) => item.volume ?? item.volumeFrom ?? 0);
@@ -737,10 +812,10 @@ function TradingChart({
       setZoomFactor((current) => {
         const next = direction > 0 ? current / 1.15 : current * 1.15;
         const clampedZoom = Math.max(0.35, Math.min(12, next));
-        const nextVisible = Math.max(12, Math.min(allCandles.length, Math.round(baseVisibleCount / clampedZoom)));
+        const nextVisible = Math.max(12, Math.min(loadedCandles.length, Math.round(baseVisibleCount / clampedZoom)));
         const absoluteAnchor = startIndex + Math.max(0, Math.min(candles.length - 1, anchorIndex));
         const projectedStart = Math.round(absoluteAnchor - anchorRatio * Math.max(0, nextVisible - 1));
-        const nextMaxStart = Math.max(0, allCandles.length - nextVisible);
+        const nextMaxStart = Math.max(0, loadedCandles.length - nextVisible);
         setStartIndex(Math.max(0, Math.min(nextMaxStart, projectedStart)));
         return clampedZoom;
       });
@@ -820,16 +895,29 @@ function TradingChart({
       </div>
 
       <div className="tv-hover-card">
-        <span className="tv-hover-date">{formatDateTime(hoveredCandle?.time)}</span>
-        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>O {formatPrice(hoveredCandle?.open ?? null)}</span>
-        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>H {formatPrice(hoveredCandle?.high ?? null)}</span>
-        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>L {formatPrice(hoveredCandle?.low ?? null)}</span>
-        <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>C {formatPrice(hoveredCandle?.close ?? null)}</span>
-        <span className="tv-hover-volume">Volume {formatNumber(hoveredCandle?.volume ?? hoveredCandle?.volumeFrom ?? null)}</span>
-        <span className="tv-hover-volume">Quote {formatNumber(hoveredCandle?.quoteVolume ?? hoveredCandle?.volumeTo ?? null)}</span>
+        <div className="tv-hover-card-main">
+          <span className="tv-hover-date">{formatDateTime(hoveredCandle?.time)}</span>
+          <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>O {formatPrice(hoveredCandle?.open ?? null)}</span>
+          <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>H {formatPrice(hoveredCandle?.high ?? null)}</span>
+          <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>L {formatPrice(hoveredCandle?.low ?? null)}</span>
+          <span className={`tv-hover-ohlc ${hoveredCandleToneClass}`}>C {formatPrice(hoveredCandle?.close ?? null)}</span>
+          <span className="tv-hover-volume">Volume {formatNumber(hoveredCandle?.volume ?? hoveredCandle?.volumeFrom ?? null)}</span>
+          <span className="tv-hover-volume">Quote {formatNumber(hoveredCandle?.quoteVolume ?? hoveredCandle?.volumeTo ?? null)}</span>
+        </div>
+
+        <div className="tv-hover-card-side">
+          <button
+            type="button"
+            className={autoScroll ? "tv-auto-toggle active" : "tv-auto-toggle"}
+            onClick={() => setAutoScroll((current) => !current)}
+          >
+            auto
+          </button>
+        </div>
       </div>
 
       <div className="chart-svg-wrap tradingview-shell">
+        {loadingOlder ? <div className="tv-history-loader">Загружаем более ранние свечи…</div> : null}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${totalHeight}`}
@@ -1017,15 +1105,6 @@ function TradingChart({
         </svg>
       </div>
 
-      <div className="tv-footer-controls">
-        <button
-          type="button"
-          className={autoScroll ? "tv-auto-toggle active" : "tv-auto-toggle"}
-          onClick={() => setAutoScroll((current) => !current)}
-        >
-          auto
-        </button>
-      </div>
     </div>
   );
 }

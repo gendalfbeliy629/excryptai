@@ -4,6 +4,7 @@ import { getBot } from "./bot/bot";
 import { forgetTelegramSubscriber, getTelegramSubscribers } from "./utils/telegram-subscribers";
 import {
   buildMarketContext,
+  getPairCandles,
   parseMarketPair
 } from "./services/market.service";
 import { evaluateMarketSignal, BuyScanMode } from "./services/signal.service";
@@ -388,6 +389,44 @@ app.get("/api/markets", async (req, res) => {
       items,
       total: items.length,
       degraded: items.length < sortedSymbols.length
+    });
+  } catch (error) {
+    return fail(res, error);
+  }
+});
+
+
+app.get("/api/markets/:symbol/candles", async (req, res) => {
+  try {
+    const rawSymbol = String(req.params.symbol || "");
+    const { baseSymbol, quoteSymbol } = parseMarketPair(rawSymbol);
+    const intervalRaw = String(req.query.interval || "1H").trim();
+    const allowedIntervals = new Set(["1m", "5m", "15m", "30m", "1H", "4H", "1D"]);
+    const interval = allowedIntervals.has(intervalRaw)
+      ? (intervalRaw as "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D")
+      : "1H";
+    const limitRaw = Number(req.query.limit || 200);
+    const limit = Math.max(50, Math.min(Number.isFinite(limitRaw) ? limitRaw : 200, 500));
+    const beforeTimeRaw = req.query.beforeTime;
+    const beforeTime =
+      beforeTimeRaw === undefined || beforeTimeRaw === null || beforeTimeRaw === ""
+        ? undefined
+        : Math.floor(Number(beforeTimeRaw));
+
+    const candles = await getPairCandles(
+      baseSymbol,
+      interval,
+      limit,
+      quoteSymbol,
+      Number.isFinite(beforeTime as number) ? beforeTime : undefined
+    );
+
+    return ok(res, {
+      symbol: `${baseSymbol}/${quoteSymbol}`,
+      interval,
+      candles,
+      hasMore: candles.length >= limit,
+      nextBeforeTime: candles.length ? candles[0].time - 1 : null
     });
   } catch (error) {
     return fail(res, error);

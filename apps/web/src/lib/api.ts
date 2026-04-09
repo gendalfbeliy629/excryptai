@@ -124,6 +124,15 @@ export type MarketsResponse = {
   degraded?: boolean;
 };
 
+
+export type MarketCandlesResponse = {
+  symbol: string;
+  interval: "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
+  candles: Candle[];
+  hasMore: boolean;
+  nextBeforeTime: number | null;
+};
+
 export type MarketDetail = {
   market: {
     asset: {
@@ -135,7 +144,7 @@ export type MarketDetail = {
       baseSymbol: string;
       quoteSymbol: string;
       display: string;
-      historySource?: "CRYPTOCOMPARE";
+      historySource?: "PIONEX";
     };
     spot: {
       priceUsd: number | null;
@@ -379,6 +388,24 @@ export async function getMarkets(limit = 30): Promise<MarketsResponse> {
 
 export async function getMarketDetail(symbol: string): Promise<MarketDetail> {
   return fetchApi<MarketDetail>(`/markets/${encodeURIComponent(symbol)}`);
+}
+
+export async function getMarketCandles(
+  symbol: string,
+  interval: "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D",
+  limit = 200,
+  beforeTime?: number
+): Promise<MarketCandlesResponse> {
+  const params = new URLSearchParams({
+    interval,
+    limit: String(limit)
+  });
+
+  if (typeof beforeTime === "number" && Number.isFinite(beforeTime)) {
+    params.set("beforeTime", String(Math.floor(beforeTime)));
+  }
+
+  return fetchApi<MarketCandlesResponse>(`/markets/${encodeURIComponent(symbol)}/candles?${params.toString()}`);
 }
 
 export async function getInfoCard(symbol: string): Promise<InfoResponse> {
