@@ -1,17 +1,11 @@
 import { Telegraf } from "telegraf";
-import {
-  BuyCandidate,
-  FailedMarketDetail,
-  RejectionBreakdownItem,
-  getBuyScanResult
-} from "../../services/buy.service";
+import { getBuyScanResult } from "../../services/buy.service";
 import { BuyScanMode } from "../../services/signal.service";
 import {
   getSharedBuyScanResult,
   getSharedBuyScanStatus,
   setSharedBuyScanResult
 } from "../../utils/buy-cache";
-
 import { buildBuyCommandMessage, formatCacheTime } from "../../utils/buy-message";
 
 function parseBuyMode(text: string): BuyScanMode {
@@ -31,18 +25,18 @@ export function registerBuyHandler(bot: Telegraf) {
 
       await ctx.reply(
         mode === "soft"
-          ? "Открываю данные из кеша BUY-сигналов или, если кеша для soft нет, запускаю мягкий scan Pionex..."
-          : "Открываю данные из кеша BUY-сигналов или, если кеша для hard нет, запускаю hard scan Pionex..."
+          ? "Открываю данные из общего Redis-кеша BUY-сигналов или, если кеша для soft нет, запускаю мягкий scan Pionex..."
+          : "Открываю данные из общего Redis-кеша BUY-сигналов или, если кеша для hard нет, запускаю hard scan Pionex..."
       );
 
-      const cached = getSharedBuyScanResult(10, mode);
+      const cached = await getSharedBuyScanResult(10, mode);
       const result = cached ?? (await getBuyScanResult(10, mode));
 
       if (!cached) {
-        setSharedBuyScanResult(result);
+        await setSharedBuyScanResult(result);
       }
 
-      const cacheStatus = getSharedBuyScanStatus(mode);
+      const cacheStatus = await getSharedBuyScanStatus(mode);
       const cacheUpdatedAt = formatCacheTime(cacheStatus.warmedAt ?? new Date().toISOString());
       const message = buildBuyCommandMessage(result, mode, cacheUpdatedAt);
 

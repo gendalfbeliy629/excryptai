@@ -1,4 +1,5 @@
-import { buildMarketContext, TrendType } from "./market.service";
+import { type TrendType } from "./market.service";
+import { getCachedMarketContext, getCachedSignalEvaluation } from "./analysis-cache.service";
 import {
   getAllPionexSpotBookTickers,
   getAllPionexSpotMarkets,
@@ -989,7 +990,7 @@ export async function getBuyScanResult(
           20
         );
 
-        const marketContext = await buildMarketContext(
+        const marketContext = await getCachedMarketContext(
           candidate.market.baseSymbol,
           candidate.market.quoteSymbol,
           {
@@ -999,7 +1000,7 @@ export async function getBuyScanResult(
           }
         );
 
-        const evaluation = evaluateMarketSignal(marketContext, mode);
+        const evaluation = await getCachedSignalEvaluation(marketContext, mode);
 
         if (!evaluation) {
           return {

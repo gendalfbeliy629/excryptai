@@ -8,14 +8,11 @@ function loadEnvFiles() {
   const candidatePaths = [
     path.resolve(cwd, ".env.local"),
     path.resolve(cwd, ".env"),
-
     path.resolve(cwd, "../../.env.local"),
     path.resolve(cwd, "../../.env")
   ];
 
-  const existingPaths = candidatePaths.filter((filePath) =>
-    fs.existsSync(filePath)
-  );
+  const existingPaths = candidatePaths.filter((filePath) => fs.existsSync(filePath));
 
   if (existingPaths.length > 0) {
     dotenv.config({
@@ -74,5 +71,8 @@ export const env = {
 
   COINCAP_API_KEY: optionalEnv("COINCAP_API_KEY"),
   CRYPTOCOMPARE_API_KEY: optionalEnv("CRYPTOCOMPARE_API_KEY"),
-  SANTIMENT_API_KEY: optionalEnv("SANTIMENT_API_KEY")
+  SANTIMENT_API_KEY: optionalEnv("SANTIMENT_API_KEY"),
+
+  REDIS_URL: optionalEnv("REDIS_URL"),
+  REDIS_ENABLED: booleanEnv("REDIS_ENABLED", true)
 };

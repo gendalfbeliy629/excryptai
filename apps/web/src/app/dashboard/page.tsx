@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const bootstrapStatus = await getDashboardBootstrapStatus("soft").catch(() => null);
 
-  if (!bootstrapStatus?.buySignalsCacheReady) {
+  if (!bootstrapStatus?.buySignalsCacheReady && !bootstrapStatus?.dashboardCacheReady) {
     return (
       <DashboardClient
         initialDashboard={null}

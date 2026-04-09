@@ -108,10 +108,17 @@ export type DashboardData = {
 export type DashboardBootstrapStatus = {
   buySignalsCacheReady: boolean;
   buySignalsCacheWarming: boolean;
+  dashboardCacheReady?: boolean;
+  dashboardCacheWarming?: boolean;
   cacheAgeMs: number | null;
   cacheExpiresInMs?: number | null;
+  dashboardCacheAgeMs?: number | null;
+  dashboardCacheExpiresInMs?: number | null;
   warmedAt: string | null;
+  dashboardWarmedAt?: string | null;
   scanMode?: string | null;
+  isStale?: boolean;
+  redisBacked?: boolean;
 };
 
 export type RefreshBuySignalsResponse = DashboardBootstrapStatus & {

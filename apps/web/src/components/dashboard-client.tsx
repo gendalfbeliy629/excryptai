@@ -529,7 +529,7 @@ async function waitUntilBuySignalsCacheReady(mode: BuyMode) {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const status = await getDashboardBootstrapStatus(mode);
 
-    if (status.buySignalsCacheReady) {
+    if (status.buySignalsCacheReady || status.dashboardCacheReady) {
       return status;
     }
 
@@ -1321,6 +1321,16 @@ export default function DashboardClient({
         : normalizeTextBlock(aiData?.text);
 
   const buyCommandLines = normalizeTextBlock(dashboard?.buyCommandText);
+
+  useEffect(() => {
+    const pair = detail?.market.pair.display ?? selectedListItem?.pair ?? dashboard?.topBuys[0]?.pair ?? "BTC/USDT";
+    const price = detail?.market.spot.priceUsd ?? selectedListItem?.priceUsd ?? null;
+    document.title = `${formatPrice(price)} · ${pair}`;
+
+    return () => {
+      document.title = "crypto-ai";
+    };
+  }, [dashboard, detail, selectedListItem]);
 
   const topError = bootstrapError ?? detailError;
 
