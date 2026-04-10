@@ -2,6 +2,7 @@ import axios from "axios";
 import Groq from "groq-sdk";
 import { env } from "../config/env";
 import { TTLCache } from "../utils/cache";
+import { getString, setString } from "../lib/redis";
 import { normalizeSymbol } from "../utils/symbols";
 
 type CoinSearchResult = {
@@ -87,7 +88,7 @@ const groq = new Groq({
 });
 
 const infoCache = new TTLCache<string>();
-const INFO_CACHE_TTL_MS = 10 * 60 * 1000;
+export const INFO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const OFFICIAL_WALLETS: Record<string, WalletInfo> = {
   BTC: {
@@ -466,9 +467,10 @@ async function getCoinDetails(query: string): Promise<CoinGeckoDetails> {
 export async function getAssetInfo(symbolOrPair: string): Promise<string> {
   const normalizedInput = normalizeSymbol(symbolOrPair.split("/")[0] || symbolOrPair);
   const cacheKey = `info:${normalizedInput}`;
-  const cached = infoCache.get(cacheKey);
+  const cached = infoCache.get(cacheKey) ?? (await getString(cacheKey));
 
   if (cached) {
+    infoCache.set(cacheKey, cached, INFO_CACHE_TTL_MS);
     return cached;
   }
 
@@ -675,6 +677,7 @@ ${JSON.stringify(promptPayload, null, 2)}
 
     if (content) {
       infoCache.set(cacheKey, content, INFO_CACHE_TTL_MS);
+      await setString(cacheKey, content, INFO_CACHE_TTL_MS);
       return content;
     }
   } catch (error) {
@@ -691,5 +694,6 @@ ${JSON.stringify(promptPayload, null, 2)}
   });
 
   infoCache.set(cacheKey, fallback, INFO_CACHE_TTL_MS);
+  await setString(cacheKey, fallback, INFO_CACHE_TTL_MS);
   return fallback;
 }

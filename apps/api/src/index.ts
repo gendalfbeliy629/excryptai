@@ -5,7 +5,7 @@ import { forgetTelegramSubscriber, getTelegramSubscribers } from "./utils/telegr
 import { getPairCandles, parseMarketPair } from "./services/market.service";
 import { BuyScanMode } from "./services/signal.service";
 import { getBuyScanResult, type BuyCandidate, type BuyMarketSummary, type BuyScanResult } from "./services/buy.service";
-import { getAssetInfo } from "./services/info.service";
+import { getAssetInfo, INFO_CACHE_TTL_MS } from "./services/info.service";
 import { askAI } from "./services/ai.service";
 import { SYMBOL_TO_COINCAP_ID } from "./utils/symbols";
 import {
@@ -28,8 +28,8 @@ import {
 } from "./utils/dashboard-cache";
 import { getAllPionexSpotTickers } from "./services/pionex.service";
 import { buildBuyCommandMessage, formatCacheTime } from "./utils/buy-message";
-import { acquireLock, connectRedis, disconnectRedis, releaseLock } from "./lib/redis";
-import { getCachedMarketContext, getCachedSignalEvaluation } from "./services/analysis-cache.service";
+import { acquireLock, connectRedis, disconnectRedis, getString, releaseLock, setString } from "./lib/redis";
+import { getCachedMarketContext, getCachedSignalEvaluation, SIGNAL_CACHE_TTL_MS } from "./services/analysis-cache.service";
 
 const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const BUY_WARMUP_LOCK_TTL_MS = 10 * 60 * 1000;
@@ -264,6 +264,7 @@ async function warmBuySignalsCache(options?: {
         latestMode: mode
       });
 
+      console.log(`[warmup] start BUY cache warmup for strategy=${mode}, limit=${limit}, force=${force}`);
       lockToken = await acquireLock(`buy-warmup-lock:${mode}`, BUY_WARMUP_LOCK_TTL_MS);
 
       if (!lockToken) {
@@ -273,11 +274,13 @@ async function warmBuySignalsCache(options?: {
 
       const result = await getBuyScanResult(limit, mode);
       await setSharedBuyScanResult(result);
+      console.log(`[warmup] finished BUY cache warmup for strategy=${mode}, buyCount=${result.buys.length}`);
       await notifyTelegramSubscribersAboutBuys(result, mode);
     } finally {
       if (lockToken) {
         await releaseLock(`buy-warmup-lock:${mode}`, lockToken);
       }
+      console.log(`[warmup] stop BUY cache warmup for strategy=${mode}`);
       await setSharedBuyScanStatus(mode, {
         warming: false
       });
@@ -346,6 +349,7 @@ async function warmDashboardCache(options?: {
         warming: true
       });
 
+      console.log(`[warmup] start dashboard warmup for strategy=${mode}, force=${force}`);
       lockToken = await acquireLock(`dashboard-warmup-lock:${mode}`, DASHBOARD_WARMUP_LOCK_TTL_MS);
 
       if (!lockToken) {
@@ -356,10 +360,12 @@ async function warmDashboardCache(options?: {
       await warmBuySignalsCache({ force, mode, limit: 10 });
       const data = await buildDashboardData(mode);
       await setSharedDashboardResult(mode, data, data.generatedAt);
+      console.log(`[warmup] finished dashboard warmup for strategy=${mode}`);
     } finally {
       if (lockToken) {
         await releaseLock(`dashboard-warmup-lock:${mode}`, lockToken);
       }
+      console.log(`[warmup] stop dashboard warmup for strategy=${mode}`);
       await setSharedDashboardStatus(mode, {
         warming: false
       });
@@ -695,7 +701,13 @@ app.get("/api/info/:symbol", async (req, res) => {
   try {
     const rawSymbol = String(req.params.symbol || "BTC");
     const { displayPair } = parseMarketPair(rawSymbol);
-    const text = await getAssetInfo(displayPair);
+    const historyCacheKey = `info:history:${displayPair}`;
+    const cachedText = await getString(historyCacheKey);
+    const text = cachedText ?? (await getAssetInfo(displayPair));
+
+    if (!cachedText) {
+      await setString(historyCacheKey, text, INFO_CACHE_TTL_MS);
+    }
 
     return ok(res, {
       symbol: displayPair.split("/")[0],
@@ -711,11 +723,24 @@ app.get("/api/ai/:symbol", async (req, res) => {
   try {
     const rawSymbol = String(req.params.symbol || "BTC");
     const { baseSymbol, quoteSymbol, displayPair } = parseMarketPair(rawSymbol);
+    const analyticsCacheKey = `info:analytics:${displayPair}`;
+    const cachedText = await getString(analyticsCacheKey);
+
+    if (cachedText) {
+      return ok(res, {
+        symbol: baseSymbol,
+        pair: displayPair,
+        text: cachedText
+      });
+    }
+
     const market = await getCachedMarketContext(baseSymbol, quoteSymbol);
     const text = await askAI(
       `Дай краткую аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
       market
     );
+
+    await setString(analyticsCacheKey, text, SIGNAL_CACHE_TTL_MS);
 
     return ok(res, {
       symbol: baseSymbol,

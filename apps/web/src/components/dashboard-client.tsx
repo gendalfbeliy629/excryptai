@@ -46,6 +46,7 @@ type IndicatorKey =
 
 type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
+type FullListSortDirection = "desc" | "asc";
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -82,6 +83,12 @@ const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "tradePlan", label: "Entry / TP / SL" },
   { key: "confirmation", label: "1H confirmation" }
 ];
+
+function signalPriority(signal: "BUY" | "HOLD" | "SELL"): number {
+  if (signal === "BUY") return 3;
+  if (signal === "HOLD") return 2;
+  return 1;
+}
 
 function signalClassName(signal: "BUY" | "HOLD" | "SELL") {
   if (signal === "BUY") return "pill signal-buy";
@@ -553,6 +560,7 @@ function TradingChart({
   const [startIndex, setStartIndex] = useState(0);
   const [clockText, setClockText] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
+  const [isChartHovered, setIsChartHovered] = useState(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const effectiveInterval = useMemo(() => getEffectiveInterval(interval), [interval]);
@@ -607,6 +615,25 @@ function TradingChart({
       svg.removeEventListener("wheel", preventBrowserZoom);
     };
   }, []);
+
+  useEffect(() => {
+    const preventPageZoomWhileChartHovered = (event: globalThis.WheelEvent) => {
+      if (!isChartHovered || !event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+    };
+
+    window.addEventListener("wheel", preventPageZoomWhileChartHovered, {
+      passive: false,
+      capture: true
+    });
+
+    return () => {
+      window.removeEventListener("wheel", preventPageZoomWhileChartHovered, true);
+    };
+  }, [isChartHovered]);
 
   useEffect(() => {
     setZoomFactor(1);
@@ -916,7 +943,11 @@ function TradingChart({
         </div>
       </div>
 
-      <div className="chart-svg-wrap tradingview-shell">
+      <div
+        className="chart-svg-wrap tradingview-shell"
+        onMouseEnter={() => setIsChartHovered(true)}
+        onMouseLeave={() => setIsChartHovered(false)}
+      >
         {loadingOlder ? <div className="tv-history-loader">Загружаем более ранние свечи…</div> : null}
         <svg
           ref={svgRef}
@@ -1134,6 +1165,7 @@ export default function DashboardClient({
     "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
   );
   const [indicatorsOpen, setIndicatorsOpen] = useState(false);
+  const [fullListSortDirection, setFullListSortDirection] = useState<FullListSortDirection>("desc");
 
   const {
     selectedSymbol,
@@ -1167,10 +1199,20 @@ export default function DashboardClient({
     [topBuys]
   );
 
-  const fullList = useMemo(
-    () => (markets?.items ?? []).filter((item) => !buySymbols.has(item.symbol)),
-    [buySymbols, markets]
-  );
+  const fullList = useMemo(() => {
+    const items = (markets?.items ?? []).filter((item) => !buySymbols.has(item.symbol));
+
+    return [...items].sort((left, right) => {
+      const direction = fullListSortDirection === "desc" ? -1 : 1;
+      const signalDelta = signalPriority(right.signal) - signalPriority(left.signal);
+
+      if (signalDelta !== 0) {
+        return signalDelta * direction;
+      }
+
+      return (right.score - left.score) * direction;
+    });
+  }, [buySymbols, fullListSortDirection, markets]);
 
   const selectedListItem = useMemo(() => {
     return (
@@ -1197,7 +1239,7 @@ export default function DashboardClient({
 
         if (cancelled) return;
 
-        setLoaderMessage("Кеш готов. Загружаем dashboard, рынок и выбранную пару.");
+        setLoaderMessage(`Кеш готов для стратегии (${buyMode}). Загружаем dashboard, рынок и выбранную пару.`);
 
         const [dashboardResponse, marketsResponse] = await Promise.all([
           getDashboardData(buyMode),
@@ -1343,7 +1385,7 @@ export default function DashboardClient({
             <h3>Прогреваем кеш сигналов</h3>
             <p>{loaderMessage}</p>
             <p className="loader-note">
-              Лоадер не скрывается, пока backend не завершит scan и не положит BUY-данные в кеш.
+              {`Лоадер не скрывается, пока backend не завершит scan и не положит BUY-данные в кеш для выбранной стратегии (${buyMode}).`}
             </p>
           </div>
         </div>
@@ -1472,9 +1514,27 @@ export default function DashboardClient({
           </div>
 
           <div className="card dashboard-list-card dashboard-full-card">
-            <div className="list-title-row">
-              <h3>Полный список</h3>
-              <span className="muted">{fullList.length}</span>
+            <div className="list-title-row full-list-title-row">
+              <div className="full-list-title-group">
+                <h3>Полный список</h3>
+                <span className="muted">{fullList.length}</span>
+              </div>
+
+              <button
+                type="button"
+                className="full-list-sort-button"
+                aria-label={`Сортировка по сигналу: ${fullListSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
+                title={`Сортировка по сигналу: ${fullListSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
+                onClick={() =>
+                  setFullListSortDirection((current) => (current === "desc" ? "asc" : "desc"))
+                }
+              >
+                <span className="full-list-sort-label">Сигнал</span>
+                <span className="full-list-sort-arrows" aria-hidden="true">
+                  <span className={fullListSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                  <span className={fullListSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                </span>
+              </button>
             </div>
 
             <div className="signal-list signal-list-compact fill-scroll">
@@ -1510,7 +1570,7 @@ export default function DashboardClient({
                 <h3>Информация</h3>
                 <div className="summary-section-caption">
                   {panelMode === "summary"
-                    ? "Сводка по выбранной паре"
+                    ? "Сводка по сигналу"
                     : panelMode === "history"
                       ? "История"
                       : "Аналитика"}

@@ -4,7 +4,7 @@ import { type BuyScanMode, type SignalEvaluation, evaluateMarketSignal } from ".
 
 const MARKET_CONTEXT_TTL_MS = 2 * 60 * 1000;
 const MARKET_CONTEXT_STALE_WINDOW_MS = 8 * 60 * 1000;
-const SIGNAL_CACHE_TTL_MS = 2 * 60 * 1000;
+export const SIGNAL_CACHE_TTL_MS = 2 * 60 * 1000;
 const SIGNAL_CACHE_STALE_WINDOW_MS = 8 * 60 * 1000;
 
 type CacheEnvelope<T> = {
