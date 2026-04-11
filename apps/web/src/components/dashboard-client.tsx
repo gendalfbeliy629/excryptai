@@ -47,6 +47,7 @@ type IndicatorKey =
 type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
 type FullListSortDirection = "desc" | "asc";
+type FullListSortField = "signal" | "pair";
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -1165,7 +1166,9 @@ export default function DashboardClient({
     "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
   );
   const [indicatorsOpen, setIndicatorsOpen] = useState(false);
-  const [fullListSortDirection, setFullListSortDirection] = useState<FullListSortDirection>("desc");
+  const [fullListSortField, setFullListSortField] = useState<FullListSortField>("signal");
+  const [fullListSignalSortDirection, setFullListSignalSortDirection] = useState<FullListSortDirection>("desc");
+  const [fullListPairSortDirection, setFullListPairSortDirection] = useState<FullListSortDirection>("asc");
 
   const {
     selectedSymbol,
@@ -1203,16 +1206,42 @@ export default function DashboardClient({
     const items = (markets?.items ?? []).filter((item) => !buySymbols.has(item.symbol));
 
     return [...items].sort((left, right) => {
-      const direction = fullListSortDirection === "desc" ? -1 : 1;
+      if (fullListSortField === "pair") {
+        const direction = fullListPairSortDirection === "asc" ? 1 : -1;
+        const pairDelta = left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+
+        if (pairDelta !== 0) {
+          return pairDelta * direction;
+        }
+
+        const nameDelta = left.name.localeCompare(right.name, "ru", { sensitivity: "base" });
+        if (nameDelta !== 0) {
+          return nameDelta * direction;
+        }
+
+        const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
+        if (signalTieBreak !== 0) {
+          return signalTieBreak;
+        }
+
+        return right.score - left.score;
+      }
+
+      const direction = fullListSignalSortDirection === "desc" ? -1 : 1;
       const signalDelta = signalPriority(right.signal) - signalPriority(left.signal);
 
       if (signalDelta !== 0) {
         return signalDelta * direction;
       }
 
-      return (right.score - left.score) * direction;
+      const scoreDelta = right.score - left.score;
+      if (scoreDelta !== 0) {
+        return scoreDelta * direction;
+      }
+
+      return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
     });
-  }, [buySymbols, fullListSortDirection, markets]);
+  }, [buySymbols, fullListPairSortDirection, fullListSignalSortDirection, fullListSortField, markets]);
 
   const selectedListItem = useMemo(() => {
     return (
@@ -1520,21 +1549,41 @@ export default function DashboardClient({
                 <span className="muted">{fullList.length}</span>
               </div>
 
-              <button
-                type="button"
-                className="full-list-sort-button"
-                aria-label={`Сортировка по сигналу: ${fullListSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
-                title={`Сортировка по сигналу: ${fullListSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
-                onClick={() =>
-                  setFullListSortDirection((current) => (current === "desc" ? "asc" : "desc"))
-                }
-              >
-                <span className="full-list-sort-label">Сигнал</span>
-                <span className="full-list-sort-arrows" aria-hidden="true">
-                  <span className={fullListSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
-                  <span className={fullListSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
-                </span>
-              </button>
+              <div className="full-list-sort-group">
+                <button
+                  type="button"
+                  className={fullListSortField === "pair" ? "full-list-sort-button active" : "full-list-sort-button"}
+                  aria-label={`Сортировка по названию пары: ${fullListPairSortDirection === "asc" ? "от А до Я" : "от Я до А"}`}
+                  title={`Сортировка по названию пары: ${fullListPairSortDirection === "asc" ? "от А до Я" : "от Я до А"}`}
+                  onClick={() => {
+                    setFullListSortField("pair");
+                    setFullListPairSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+                  }}
+                >
+                  <span className="full-list-sort-label">Пара</span>
+                  <span className="full-list-sort-arrows" aria-hidden="true">
+                    <span className={fullListSortField === "pair" && fullListPairSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                    <span className={fullListSortField === "pair" && fullListPairSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className={fullListSortField === "signal" ? "full-list-sort-button active" : "full-list-sort-button"}
+                  aria-label={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
+                  title={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
+                  onClick={() => {
+                    setFullListSortField("signal");
+                    setFullListSignalSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+                  }}
+                >
+                  <span className="full-list-sort-label">Сигнал</span>
+                  <span className="full-list-sort-arrows" aria-hidden="true">
+                    <span className={fullListSortField === "signal" && fullListSignalSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                    <span className={fullListSortField === "signal" && fullListSignalSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                  </span>
+                </button>
+              </div>
             </div>
 
             <div className="signal-list signal-list-compact fill-scroll">
