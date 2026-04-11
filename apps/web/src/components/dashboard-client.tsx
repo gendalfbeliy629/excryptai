@@ -720,7 +720,7 @@ function TradingChart({
   const volumeHeight = 90;
   const rsiHeight = activeIndicators.rsi ? 90 : 0;
   const macdHeight = activeIndicators.macd ? 96 : 0;
-  const gap = 16;
+  const gap = 8;
   const bottomAxisHeight = 34;
 
   const totalHeight =
