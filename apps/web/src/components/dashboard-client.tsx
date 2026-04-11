@@ -47,7 +47,7 @@ type IndicatorKey =
 type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
 type FullListSortDirection = "desc" | "asc";
-type FullListSortField = "signal" | "pair";
+type FullListSortField = "signal" | "pair" | "volume";
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -1169,6 +1169,8 @@ export default function DashboardClient({
   const [fullListSortField, setFullListSortField] = useState<FullListSortField>("signal");
   const [fullListSignalSortDirection, setFullListSignalSortDirection] = useState<FullListSortDirection>("desc");
   const [fullListPairSortDirection, setFullListPairSortDirection] = useState<FullListSortDirection>("asc");
+  const [fullListVolumeSortDirection, setFullListVolumeSortDirection] = useState<FullListSortDirection>("desc");
+  const [fullListSearchQuery, setFullListSearchQuery] = useState("");
 
   const {
     selectedSymbol,
@@ -1203,7 +1205,20 @@ export default function DashboardClient({
   );
 
   const fullList = useMemo(() => {
-    const items = (markets?.items ?? []).filter((item) => !buySymbols.has(item.symbol));
+    const searchQuery = fullListSearchQuery.trim().toLocaleLowerCase("ru");
+
+    const items = (markets?.items ?? [])
+      .filter((item) => !buySymbols.has(item.symbol))
+      .filter((item) => {
+        if (!searchQuery) return true;
+
+        const haystack = [item.name, item.pair, item.symbol]
+          .filter(Boolean)
+          .join(" ")
+          .toLocaleLowerCase("ru");
+
+        return haystack.includes(searchQuery);
+      });
 
     return [...items].sort((left, right) => {
       if (fullListSortField === "pair") {
@@ -1227,6 +1242,22 @@ export default function DashboardClient({
         return right.score - left.score;
       }
 
+      if (fullListSortField === "volume") {
+        const direction = fullListVolumeSortDirection === "desc" ? -1 : 1;
+        const volumeDelta = (right.volume24h ?? 0) - (left.volume24h ?? 0);
+
+        if (volumeDelta !== 0) {
+          return volumeDelta * direction;
+        }
+
+        const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
+        if (signalTieBreak !== 0) {
+          return signalTieBreak;
+        }
+
+        return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+      }
+
       const direction = fullListSignalSortDirection === "desc" ? -1 : 1;
       const signalDelta = signalPriority(right.signal) - signalPriority(left.signal);
 
@@ -1241,7 +1272,7 @@ export default function DashboardClient({
 
       return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
     });
-  }, [buySymbols, fullListPairSortDirection, fullListSignalSortDirection, fullListSortField, markets]);
+  }, [buySymbols, fullListPairSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
 
   const selectedListItem = useMemo(() => {
     return (
@@ -1583,7 +1614,34 @@ export default function DashboardClient({
                     <span className={fullListSortField === "signal" && fullListSignalSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
                   </span>
                 </button>
+
+                <button
+                  type="button"
+                  className={fullListSortField === "volume" ? "full-list-sort-button active" : "full-list-sort-button"}
+                  aria-label={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
+                  title={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
+                  onClick={() => {
+                    setFullListSortField("volume");
+                    setFullListVolumeSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+                  }}
+                >
+                  <span className="full-list-sort-label">Объем</span>
+                  <span className="full-list-sort-arrows" aria-hidden="true">
+                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                  </span>
+                </button>
               </div>
+            </div>
+
+            <div className="full-list-search-row">
+              <input
+                type="text"
+                value={fullListSearchQuery}
+                onChange={(event) => setFullListSearchQuery(event.target.value)}
+                placeholder="Поиск по имени криптовалюты"
+                className="full-list-search-input"
+              />
             </div>
 
             <div className="signal-list signal-list-compact fill-scroll">
