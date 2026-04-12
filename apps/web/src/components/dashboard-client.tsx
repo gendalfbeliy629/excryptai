@@ -1170,6 +1170,8 @@ export default function DashboardClient({
   const [fullListVolumeSortDirection, setFullListVolumeSortDirection] = useState<FullListSortDirection>("desc");
   const [fullListPriceSortDirection, setFullListPriceSortDirection] = useState<FullListSortDirection>("desc");
   const [fullListSearchQuery, setFullListSearchQuery] = useState("");
+  const [showStage1Only, setShowStage1Only] = useState(false);
+  const [showStage2Only, setShowStage2Only] = useState(false);
 
   const {
     selectedSymbol,
@@ -1195,88 +1197,83 @@ export default function DashboardClient({
 
   const fullList = useMemo(() => {
     const searchQuery = fullListSearchQuery.trim().toLocaleLowerCase("ru");
+    const sourceItems = markets?.items?.length ? markets.items : dashboard?.allStage1Markets ?? [];
 
-    const items = ((markets?.items?.length ? markets.items : dashboard?.allStage1Markets ?? []))
-      .filter((item) => {
-        if (!searchQuery) return true;
+    const compareNumbers = (left: number | null | undefined, right: number | null | undefined, direction: FullListSortDirection) => {
+      const safeLeft = Number.isFinite(left as number) ? Number(left) : 0;
+      const safeRight = Number.isFinite(right as number) ? Number(right) : 0;
 
-        const haystack = [item.name, item.pair, item.symbol]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase("ru");
+      if (safeLeft === safeRight) return 0;
+      return direction === "asc" ? safeLeft - safeRight : safeRight - safeLeft;
+    };
 
-        return haystack.includes(searchQuery);
-      });
+    const compareStrings = (left: string, right: string, direction: FullListSortDirection) => {
+      const delta = left.localeCompare(right, "ru", { sensitivity: "base" });
+      return direction === "asc" ? delta : -delta;
+    };
+
+    const items = sourceItems.filter((item) => {
+      if (showStage2Only && !item.stage2Passed) {
+        return false;
+      }
+
+      if (!showStage2Only && showStage1Only && !item.stage1Passed) {
+        return false;
+      }
+
+      if (!searchQuery) return true;
+
+      const haystack = [item.name, item.pair, item.symbol]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("ru");
+
+      return haystack.includes(searchQuery);
+    });
 
     return [...items].sort((left, right) => {
       if (fullListSortField === "pair") {
-        const direction = fullListPairSortDirection === "asc" ? 1 : -1;
-        const pairDelta = left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+        const pairDelta = compareStrings(left.pair, right.pair, fullListPairSortDirection);
+        if (pairDelta !== 0) return pairDelta;
 
-        if (pairDelta !== 0) {
-          return pairDelta * direction;
-        }
-
-        const nameDelta = left.name.localeCompare(right.name, "ru", { sensitivity: "base" });
-        if (nameDelta !== 0) {
-          return nameDelta * direction;
-        }
+        const nameDelta = compareStrings(left.name, right.name, fullListPairSortDirection);
+        if (nameDelta !== 0) return nameDelta;
 
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
-        if (signalTieBreak !== 0) {
-          return signalTieBreak;
-        }
+        if (signalTieBreak !== 0) return signalTieBreak;
 
         return right.score - left.score;
       }
 
       if (fullListSortField === "volume") {
-        const direction = fullListVolumeSortDirection === "desc" ? -1 : 1;
-        const volumeDelta = (right.volume24h ?? 0) - (left.volume24h ?? 0);
-
-        if (volumeDelta !== 0) {
-          return volumeDelta * direction;
-        }
+        const volumeDelta = compareNumbers(left.volume24h ?? 0, right.volume24h ?? 0, fullListVolumeSortDirection);
+        if (volumeDelta !== 0) return volumeDelta;
 
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
-        if (signalTieBreak !== 0) {
-          return signalTieBreak;
-        }
+        if (signalTieBreak !== 0) return signalTieBreak;
 
-        return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+        return compareStrings(left.pair, right.pair, "asc");
       }
 
       if (fullListSortField === "price") {
-        const direction = fullListPriceSortDirection === "desc" ? -1 : 1;
-        const priceDelta = (right.priceUsd ?? 0) - (left.priceUsd ?? 0);
-
-        if (priceDelta !== 0) {
-          return priceDelta * direction;
-        }
+        const priceDelta = compareNumbers(left.priceUsd ?? 0, right.priceUsd ?? 0, fullListPriceSortDirection);
+        if (priceDelta !== 0) return priceDelta;
 
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
-        if (signalTieBreak !== 0) {
-          return signalTieBreak;
-        }
+        if (signalTieBreak !== 0) return signalTieBreak;
 
-        return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+        return compareStrings(left.pair, right.pair, "asc");
       }
 
-      const direction = fullListSignalSortDirection === "desc" ? -1 : 1;
-      const signalDelta = signalPriority(right.signal) - signalPriority(left.signal);
+      const signalDelta = compareNumbers(signalPriority(left.signal), signalPriority(right.signal), fullListSignalSortDirection);
+      if (signalDelta !== 0) return signalDelta;
 
-      if (signalDelta !== 0) {
-        return signalDelta * direction;
-      }
+      const scoreDelta = compareNumbers(left.score, right.score, fullListSignalSortDirection);
+      if (scoreDelta !== 0) return scoreDelta;
 
-      const scoreDelta = right.score - left.score;
-      if (scoreDelta !== 0) {
-        return scoreDelta * direction;
-      }
-
-      return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+      return compareStrings(left.pair, right.pair, "asc");
     });
-  }, [dashboard, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
+  }, [dashboard, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets, showStage1Only, showStage2Only]);
 
   const selectedListItem = useMemo(() => {
     return (
@@ -1403,7 +1400,6 @@ export default function DashboardClient({
 
   const sideTextLines = [...summaryLines, "", "Как сопровождать сделку:", ...managementLines];
 
-  const buyCommandLines = normalizeTextBlock(dashboard?.buyCommandText);
 
   useEffect(() => {
     const pair = detail?.market.pair.display ?? selectedListItem?.pair ?? dashboard?.topBuys[0]?.pair ?? "BTC/USDT";
@@ -1519,43 +1515,62 @@ export default function DashboardClient({
         </div>
 
         <div className="dashboard-middle-stack">
-          <div className="card dashboard-list-card dashboard-buy-card">
-            <div className="list-title-row buy-signals-head">
-              <div className="buy-signals-title-wrap">
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><h3>Сигналы</h3>{cacheStatusText ? <span className="muted" style={{ fontSize: 11 }}>• {cacheStatusText}</span> : null}</div>
-              </div>
-
-              <div className="mode-switch">
-                <button
-                  type="button"
-                  className={buyMode === "soft" ? "mode-button active" : "mode-button"}
-                  onClick={() => setBuyMode("soft")}
-                >
-                  soft
-                </button>
-                <button
-                  type="button"
-                  className={buyMode === "hard" ? "mode-button active" : "mode-button"}
-                  onClick={() => setBuyMode("hard")}
-                >
-                  hard
-                </button>
-              </div>
-            </div>
-
-            <div className="signal-list fill-scroll buy-signal-detail-list buy-command-scroll">
-              <div className="buy-command-text-block">
-                {buyCommandLines.length ? (
-                  buyCommandLines.map((line, index) => <p key={`buy-command-${index}`}>{line}</p>)
-                ) : (
-                  <p>Данные /buy пока недоступны.</p>
-                )}
-              </div>
-            </div>
-          </div>
-
           <div className="card dashboard-list-card dashboard-full-card">
             <div className="full-list-header">
+              <div className="full-list-controls-row">
+                <div className="mode-switch">
+                  <button
+                    type="button"
+                    className={buyMode === "soft" ? "mode-button active" : "mode-button"}
+                    onClick={() => setBuyMode("soft")}
+                  >
+                    soft
+                  </button>
+                  <button
+                    type="button"
+                    className={buyMode === "hard" ? "mode-button active" : "mode-button"}
+                    onClick={() => setBuyMode("hard")}
+                  >
+                    hard
+                  </button>
+                </div>
+
+                <div className="stage-filter-group">
+                  <label className="stage-filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showStage1Only}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+
+                        if (!checked && showStage2Only) {
+                          setShowStage2Only(false);
+                        }
+
+                        setShowStage1Only(checked);
+                      }}
+                    />
+                    <span>Stage 1</span>
+                  </label>
+
+                  <label className="stage-filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showStage2Only}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setShowStage2Only(checked);
+
+                        if (checked) {
+                          setShowStage1Only(true);
+                        }
+                      }}
+                    />
+                    <span>Stage 2</span>
+                  </label>
+                </div>
+              </div>
+
               <div className="list-title-row full-list-title-row">
                 <div className="full-list-title-group">
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}><h3>Полный список</h3>{cacheStatusText ? <span className="muted" style={{ fontSize: 11 }}>• {cacheStatusText}</span> : null}</div>

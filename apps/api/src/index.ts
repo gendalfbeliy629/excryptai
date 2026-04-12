@@ -199,7 +199,9 @@ async function buildMarketListItem(symbol: string, volume24h = 0): Promise<Marke
         rsi14: market.technicals.rsi14,
         signal: "HOLD",
         score: 0,
-        volume24h
+        volume24h,
+        stage1Passed: false,
+        stage2Passed: false
       };
     }
 
@@ -214,7 +216,9 @@ async function buildMarketListItem(symbol: string, volume24h = 0): Promise<Marke
       rsi14: market.technicals.rsi14,
       signal: evaluation.signal,
       score: evaluation.score,
-      volume24h
+      volume24h,
+      stage1Passed: true,
+      stage2Passed: evaluation.signal === "BUY"
     };
   } catch (error) {
     console.error(`Failed to build market list item for ${symbol}:`, error);

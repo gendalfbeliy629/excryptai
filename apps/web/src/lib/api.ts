@@ -30,6 +30,8 @@ export type MarketListItem = {
   signal: "BUY" | "HOLD" | "SELL";
   score: number;
   volume24h?: number;
+  stage1Passed?: boolean;
+  stage2Passed?: boolean;
 };
 
 export type BuyCandidate = {

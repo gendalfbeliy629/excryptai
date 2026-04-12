@@ -209,8 +209,8 @@ button {
 }
 
 .dashboard-middle-stack {
-  display: grid;
-  grid-template-rows: minmax(0, 40%) minmax(0, 60%);
+  display: flex;
+  flex-direction: column;
   gap: clamp(6px, 0.45vw, 14px);
 }
 
@@ -274,6 +274,35 @@ button {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: #0e1520;
+}
+
+
+.full-list-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stage-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stage-filter-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.stage-filter-checkbox input {
+  margin: 0;
 }
 
 .mode-button {

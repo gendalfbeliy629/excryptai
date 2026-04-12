@@ -23,6 +23,8 @@ export type Stage1MarketListItem = {
   signal: "BUY" | "HOLD" | "SELL";
   score: number;
   volume24h: number;
+  stage1Passed: boolean;
+  stage2Passed: boolean;
 };
 
 export type BuyCandidate = {
@@ -1056,25 +1058,28 @@ export async function getBuyScanResult(
     .map((item) => item.evaluation);
 
   const stage1MarketMap = new Map<string, Stage1MarketListItem>();
+  const stage1CandidateMap = new Map(stage1Candidates.map((candidate) => [candidate.market.symbol, candidate]));
 
-  for (const candidate of stage1Candidates) {
-    stage1MarketMap.set(candidate.market.symbol, {
-      symbol: candidate.market.baseSymbol,
-      name: candidate.market.baseSymbol,
-      pair: getPairLabel(candidate.market),
-      priceUsd: candidate.ticker.close,
-      change24h: candidate.ticker.changePercent24h,
+  for (const screenedMarket of stage1.screenedMarkets) {
+    stage1MarketMap.set(screenedMarket.market.symbol, {
+      symbol: screenedMarket.market.baseSymbol,
+      name: screenedMarket.market.baseSymbol,
+      pair: getPairLabel(screenedMarket.market),
+      priceUsd: screenedMarket.ticker?.close ?? null,
+      change24h: screenedMarket.ticker?.changePercent24h ?? null,
       change30d: null,
       trend30d: "SIDEWAYS",
       rsi14: null,
       signal: "HOLD",
-      score: candidate.stage1Score,
-      volume24h: candidate.ticker.amount,
+      score: screenedMarket.stage1Score,
+      volume24h: screenedMarket.ticker?.amount ?? 0,
+      stage1Passed: screenedMarket.passedToStage2,
+      stage2Passed: false,
     });
   }
 
   for (const evaluation of successfulEvaluations) {
-    stage1MarketMap.set(`${evaluation.symbol}${evaluation.quoteSymbol}`, {
+    stage1MarketMap.set(`${evaluation.symbol}_${evaluation.quoteSymbol}`, {
       symbol: evaluation.symbol,
       name: evaluation.name,
       pair: evaluation.pair,
@@ -1086,8 +1091,10 @@ export async function getBuyScanResult(
       signal: evaluation.signal,
       score: evaluation.score,
       volume24h:
-        stage1Candidates.find((candidate) => candidate.market.symbol === `${evaluation.symbol}${evaluation.quoteSymbol}`)
+        stage1CandidateMap.get(`${evaluation.symbol}_${evaluation.quoteSymbol}`)
           ?.ticker.amount ?? 0,
+      stage1Passed: true,
+      stage2Passed: evaluation.signal === "BUY",
     });
   }
 
