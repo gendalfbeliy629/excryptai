@@ -1157,6 +1157,9 @@ export default function DashboardClient({
   const [bootstrapError, setBootstrapError] = useState<string | null>(
     dashboardError ?? marketsError ?? initialDetailError ?? null
   );
+  const [cacheStatusText, setCacheStatusText] = useState<string | null>(
+    initialDashboard?.warming ? "обновляется" : null
+  );
   const [loaderMessage, setLoaderMessage] = useState(
     "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
   );
@@ -1190,16 +1193,10 @@ export default function DashboardClient({
 
   const topBuys = dashboard?.topBuys ?? [];
 
-  const buySymbols = useMemo(
-    () => new Set(topBuys.map((item) => item.symbol)),
-    [topBuys]
-  );
-
   const fullList = useMemo(() => {
     const searchQuery = fullListSearchQuery.trim().toLocaleLowerCase("ru");
 
-    const items = (markets?.items ?? [])
-      .filter((item) => !buySymbols.has(item.symbol))
+    const items = ((markets?.items?.length ? markets.items : dashboard?.allStage1Markets ?? []))
       .filter((item) => {
         if (!searchQuery) return true;
 
@@ -1279,41 +1276,47 @@ export default function DashboardClient({
 
       return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
     });
-  }, [buySymbols, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
+  }, [dashboard, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
 
   const selectedListItem = useMemo(() => {
     return (
       topBuys.find((item) => item.symbol === selectedSymbol) ??
-      (markets?.items ?? []).find((item) => item.symbol === selectedSymbol) ??
+      (markets?.items ?? dashboard?.allStage1Markets ?? []).find((item) => item.symbol === selectedSymbol) ??
       null
     );
-  }, [topBuys, markets, selectedSymbol]);
+  }, [dashboard, topBuys, markets, selectedSymbol]);
 
 
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
-      setBootstrapLoading(true);
+      const hasVisibleData = Boolean(dashboard || markets || detail);
+
+      setBootstrapLoading(!hasVisibleData);
       setBootstrapError(null);
       setLoaderMessage(`Ждём, пока backend положит BUY-сигналы (${buyMode}) в кеш.`);
 
       try {
-        await waitUntilBuySignalsCacheReady(buyMode);
+        const status = await waitUntilBuySignalsCacheReady(buyMode);
 
         if (cancelled) return;
 
+        setCacheStatusText(
+          status.buySignalsCacheWarming || status.dashboardCacheWarming ? "обновляется" : null
+        );
         setLoaderMessage(`Кеш готов для стратегии (${buyMode}). Загружаем dashboard, рынок и выбранную пару.`);
 
         const [dashboardResponse, marketsResponse] = await Promise.all([
           getDashboardData(buyMode),
-          getMarkets(30)
+          getMarkets(buyMode)
         ]);
 
         if (cancelled) return;
 
         setDashboard(dashboardResponse);
         setMarkets(marketsResponse);
+        setCacheStatusText(dashboardResponse.warming ? "обновляется" : null);
 
         const nextSymbol =
           dashboardResponse.topBuys[0]?.symbol ??
@@ -1357,13 +1360,19 @@ export default function DashboardClient({
     try {
       await refreshBuySignalsCache(buyMode);
 
-      const [dashboardResponse, marketsResponse] = await Promise.all([
+      const [dashboardResponse, marketsResponse, status] = await Promise.all([
         getDashboardData(buyMode),
-        getMarkets(30)
+        getMarkets(buyMode),
+        getDashboardBootstrapStatus(buyMode)
       ]);
 
       setDashboard(dashboardResponse);
       setMarkets(marketsResponse);
+      setCacheStatusText(
+        dashboardResponse.warming || status.buySignalsCacheWarming || status.dashboardCacheWarming
+          ? "обновляется"
+          : null
+      );
 
       const nextSymbol =
         dashboardResponse.topBuys[0]?.symbol ??
@@ -1384,6 +1393,10 @@ export default function DashboardClient({
       setBootstrapLoading(false);
     }
   }
+
+  useEffect(() => {
+    setCacheStatusText(dashboard?.warming ? "обновляется" : null);
+  }, [dashboard?.warming]);
 
   const summaryLines = buildSummaryLines(detail, dashboard);
   const managementLines = buildManagementLines(detail, dashboard, selectedSymbol);
@@ -1509,7 +1522,7 @@ export default function DashboardClient({
           <div className="card dashboard-list-card dashboard-buy-card">
             <div className="list-title-row buy-signals-head">
               <div className="buy-signals-title-wrap">
-                <h3>Сигналы</h3>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><h3>Сигналы</h3>{cacheStatusText ? <span className="muted" style={{ fontSize: 11 }}>• {cacheStatusText}</span> : null}</div>
               </div>
 
               <div className="mode-switch">
@@ -1545,7 +1558,7 @@ export default function DashboardClient({
             <div className="full-list-header">
               <div className="list-title-row full-list-title-row">
                 <div className="full-list-title-group">
-                  <h3>Полный список</h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}><h3>Полный список</h3>{cacheStatusText ? <span className="muted" style={{ fontSize: 11 }}>• {cacheStatusText}</span> : null}</div>
                   <span className="muted">{fullList.length} пар</span>
                 </div>
               </div>

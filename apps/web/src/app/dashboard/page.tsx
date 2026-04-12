@@ -27,7 +27,7 @@ export default async function DashboardPage() {
 
   const [dashboardResult, marketsResult] = await Promise.all([
     safeGetDashboardData("soft"),
-    safeGetMarkets(30)
+    safeGetMarkets("soft")
   ]);
 
   const initialSelectedSymbol =

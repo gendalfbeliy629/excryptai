@@ -86,6 +86,7 @@ export type BuyCandidate = {
 export type DashboardData = {
   featured: MarketListItem[];
   topBuys: BuyCandidate[];
+  allStage1Markets: MarketListItem[];
   summary: {
     totalChecked: number;
     buyCount: number;
@@ -103,6 +104,7 @@ export type DashboardData = {
   buyCommandText: string;
   scanMode: "soft" | "hard";
   degraded?: boolean;
+  warming?: boolean;
 };
 
 export type DashboardBootstrapStatus = {
@@ -389,8 +391,17 @@ export async function getDashboardData(
   return fetchApi<DashboardData>(`/dashboard?mode=${mode}`);
 }
 
-export async function getMarkets(limit = 30): Promise<MarketsResponse> {
-  return fetchApi<MarketsResponse>(`/markets?limit=${limit}`);
+export async function getMarkets(
+  mode: "soft" | "hard" = "soft",
+  limit?: number
+): Promise<MarketsResponse> {
+  const params = new URLSearchParams({ mode });
+
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+    params.set("limit", String(Math.floor(limit)));
+  }
+
+  return fetchApi<MarketsResponse>(`/markets?${params.toString()}`);
 }
 
 export async function getMarketDetail(symbol: string): Promise<MarketDetail> {
@@ -429,8 +440,17 @@ export async function safeGetDashboardData(
   return safeFetchApi<DashboardData>(`/dashboard?mode=${mode}`);
 }
 
-export async function safeGetMarkets(limit = 30): Promise<ApiResult<MarketsResponse>> {
-  return safeFetchApi<MarketsResponse>(`/markets?limit=${limit}`);
+export async function safeGetMarkets(
+  mode: "soft" | "hard" = "soft",
+  limit?: number
+): Promise<ApiResult<MarketsResponse>> {
+  const params = new URLSearchParams({ mode });
+
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+    params.set("limit", String(Math.floor(limit)));
+  }
+
+  return safeFetchApi<MarketsResponse>(`/markets?${params.toString()}`);
 }
 
 export async function safeGetMarketDetail(symbol: string): Promise<ApiResult<MarketDetail>> {

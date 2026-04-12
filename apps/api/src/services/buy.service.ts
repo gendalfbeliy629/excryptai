@@ -11,6 +11,20 @@ import {
 } from "./pionex.service";
 import { BuyScanMode, evaluateMarketSignal } from "./signal.service";
 
+export type Stage1MarketListItem = {
+  symbol: string;
+  name: string;
+  pair: string;
+  priceUsd: number | null;
+  change24h: number | null;
+  change30d: number | null;
+  trend30d: TrendType;
+  rsi14: number | null;
+  signal: "BUY" | "HOLD" | "SELL";
+  score: number;
+  volume24h: number;
+};
+
 export type BuyCandidate = {
   rank: number;
   pair: string;
@@ -115,6 +129,7 @@ export type BuyMarketSummary = {
 
 export type BuyScanResult = {
   buys: BuyCandidate[];
+  stage1Markets: Stage1MarketListItem[];
   summary: BuyMarketSummary;
 };
 
@@ -1036,9 +1051,63 @@ export async function getBuyScanResult(
     mode
   );
 
-  const buys: BuyCandidate[] = scanResults
+  const successfulEvaluations = scanResults
     .filter((item): item is Extract<ScanItemResult, { status: "ok" }> => item.status === "ok")
-    .map((item) => item.evaluation)
+    .map((item) => item.evaluation);
+
+  const stage1MarketMap = new Map<string, Stage1MarketListItem>();
+
+  for (const candidate of stage1Candidates) {
+    stage1MarketMap.set(candidate.market.symbol, {
+      symbol: candidate.market.baseSymbol,
+      name: candidate.market.baseSymbol,
+      pair: getPairLabel(candidate.market),
+      priceUsd: candidate.ticker.close,
+      change24h: candidate.ticker.changePercent24h,
+      change30d: null,
+      trend30d: "SIDEWAYS",
+      rsi14: null,
+      signal: "HOLD",
+      score: candidate.stage1Score,
+      volume24h: candidate.ticker.amount,
+    });
+  }
+
+  for (const evaluation of successfulEvaluations) {
+    stage1MarketMap.set(`${evaluation.symbol}${evaluation.quoteSymbol}`, {
+      symbol: evaluation.symbol,
+      name: evaluation.name,
+      pair: evaluation.pair,
+      priceUsd: evaluation.priceUsd,
+      change24h: evaluation.change24h,
+      change30d: evaluation.change30d,
+      trend30d: evaluation.trend30d,
+      rsi14: evaluation.rsi14,
+      signal: evaluation.signal,
+      score: evaluation.score,
+      volume24h:
+        stage1Candidates.find((candidate) => candidate.market.symbol === `${evaluation.symbol}${evaluation.quoteSymbol}`)
+          ?.ticker.amount ?? 0,
+    });
+  }
+
+  const stage1Markets = Array.from(stage1MarketMap.values()).sort((a, b) => {
+    const signalRank = (value: Stage1MarketListItem["signal"]) =>
+      value === "BUY" ? 3 : value === "HOLD" ? 2 : 1;
+
+    const signalDelta = signalRank(b.signal) - signalRank(a.signal);
+    if (signalDelta !== 0) return signalDelta;
+
+    const scoreDelta = b.score - a.score;
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const volumeDelta = (b.volume24h ?? 0) - (a.volume24h ?? 0);
+    if (volumeDelta !== 0) return volumeDelta;
+
+    return a.pair.localeCompare(b.pair, "ru", { sensitivity: "base" });
+  });
+
+  const buys: BuyCandidate[] = successfulEvaluations
     .filter((item): item is RawEvaluation & { signal: "BUY" } => item.signal === "BUY")
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -1065,6 +1134,7 @@ export async function getBuyScanResult(
 
   return {
     buys,
+    stage1Markets,
     summary,
   };
 }

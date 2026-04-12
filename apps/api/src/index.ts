@@ -4,10 +4,9 @@ import { getBot } from "./bot/bot";
 import { forgetTelegramSubscriber, getTelegramSubscribers } from "./utils/telegram-subscribers";
 import { getPairCandles, parseMarketPair } from "./services/market.service";
 import { BuyScanMode } from "./services/signal.service";
-import { getBuyScanResult, type BuyCandidate, type BuyMarketSummary, type BuyScanResult } from "./services/buy.service";
+import { getBuyScanResult, type BuyCandidate, type BuyMarketSummary, type BuyScanResult, type Stage1MarketListItem } from "./services/buy.service";
 import { getAssetInfo, INFO_CACHE_TTL_MS } from "./services/info.service";
 import { askAI } from "./services/ai.service";
-import { SYMBOL_TO_COINCAP_ID } from "./utils/symbols";
 import {
   getSharedBuyScanResult,
   getSharedBuyScanStatus,
@@ -35,28 +34,18 @@ const BUY_CACHE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const BUY_WARMUP_LOCK_TTL_MS = 10 * 60 * 1000;
 const DASHBOARD_WARMUP_LOCK_TTL_MS = 10 * 60 * 1000;
 
-type MarketListItem = {
-  symbol: string;
-  name: string;
-  pair: string;
-  priceUsd: number | null;
-  change24h: number | null;
-  change30d: number | null;
-  trend30d: "BULLISH" | "BEARISH" | "SIDEWAYS";
-  rsi14: number | null;
-  signal: "BUY" | "HOLD" | "SELL";
-  score: number;
-  volume24h: number;
-};
+type MarketListItem = Stage1MarketListItem;
 
 type DashboardResponseData = {
   featured: MarketListItem[];
   topBuys: BuyCandidate[];
+  allStage1Markets: MarketListItem[];
   summary: BuyMarketSummary;
   generatedAt: string | null;
   buyCommandText: string;
   scanMode: BuyScanMode;
   degraded: boolean;
+  warming: boolean;
 };
 
 async function notifyTelegramSubscribersAboutBuys(result: BuyScanResult, mode: BuyScanMode) {
@@ -233,7 +222,6 @@ async function buildMarketListItem(symbol: string, volume24h = 0): Promise<Marke
   }
 }
 
-const ALL_SYMBOLS = Object.keys(SYMBOL_TO_COINCAP_ID);
 const DASHBOARD_SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "BNB", "ADA"];
 
 async function warmBuySignalsCache(options?: {
@@ -301,7 +289,10 @@ async function buildDashboardData(mode: BuyScanMode): Promise<DashboardResponseD
   });
 
   const buys = await getDashboardBuyScanResult(5, mode);
-  const buyStatus = await getSharedBuyScanStatus(mode);
+  const [buyStatus, dashboardStatus] = await Promise.all([
+    getSharedBuyScanStatus(mode),
+    getSharedDashboardStatus(mode)
+  ]);
 
   const featured = featuredRaw
     .filter((item): item is MarketListItem => item !== null)
@@ -312,6 +303,7 @@ async function buildDashboardData(mode: BuyScanMode): Promise<DashboardResponseD
   return {
     featured,
     topBuys: buys.buys,
+    allStage1Markets: buys.stage1Markets,
     summary: buys.summary,
     generatedAt,
     buyCommandText: buildBuyCommandMessage(
@@ -320,7 +312,8 @@ async function buildDashboardData(mode: BuyScanMode): Promise<DashboardResponseD
       formatCacheTime(generatedAt ?? new Date().toISOString())
     ),
     scanMode: mode,
-    degraded: featured.length < DASHBOARD_SYMBOLS.length
+    degraded: featured.length < DASHBOARD_SYMBOLS.length,
+    warming: buyStatus.warming || dashboardStatus.warming
   };
 }
 
@@ -410,15 +403,37 @@ async function getDashboardBuyScanResult(
 }
 
 async function getDashboardDataCached(mode: BuyScanMode): Promise<DashboardResponseData> {
-  const cached = await getSharedDashboardResult<DashboardResponseData>(mode);
+  const [cached, dashboardStatus, buyStatus] = await Promise.all([
+    getSharedDashboardResult<DashboardResponseData>(mode),
+    getSharedDashboardStatus(mode),
+    getSharedBuyScanStatus(mode)
+  ]);
+
   if (cached) {
-    const status = await getSharedDashboardStatus(mode);
-    if (status.isStale) {
+    if (dashboardStatus.isStale) {
       void warmDashboardCache({ force: true, mode }).catch((error) => {
         console.error(`Background dashboard stale refresh failed for ${mode}:`, error);
       });
     }
-    return cached;
+
+    return {
+      ...cached,
+      warming: cached.warming || buyStatus.warming || dashboardStatus.warming
+    };
+  }
+
+  if (buyStatus.hasReadyCache) {
+    const fallback = await buildDashboardData(mode);
+    void setSharedDashboardResult(mode, fallback, fallback.generatedAt).catch((error) => {
+      console.error(`Failed to persist dashboard fallback for ${mode}:`, error);
+    });
+    void warmDashboardCache({ force: dashboardStatus.isStale || !dashboardStatus.hasReadyCache, mode }).catch((error) => {
+      console.error(`Background dashboard warmup from BUY cache failed for ${mode}:`, error);
+    });
+    return {
+      ...fallback,
+      warming: true
+    };
   }
 
   await warmDashboardCache({ force: true, mode });
@@ -482,7 +497,7 @@ app.get("/api/dashboard/bootstrap-status", async (req, res) => {
     return ok(res, {
       buySignalsCacheReady: buyStatus.hasReadyCache,
       buySignalsCacheWarming: buyStatus.warming,
-      dashboardCacheReady: dashboardStatus.hasReadyCache,
+      dashboardCacheReady: dashboardStatus.hasReadyCache || buyStatus.hasReadyCache,
       dashboardCacheWarming: dashboardStatus.warming,
       cacheAgeMs: buyStatus.cacheAgeMs,
       cacheExpiresInMs: buyStatus.cacheExpiresInMs,
@@ -519,7 +534,7 @@ app.get("/api/dashboard/refresh-cache", async (req, res) => {
     return ok(res, {
       buySignalsCacheReady: buyStatus.hasReadyCache,
       buySignalsCacheWarming: buyStatus.warming,
-      dashboardCacheReady: dashboardStatus.hasReadyCache,
+      dashboardCacheReady: dashboardStatus.hasReadyCache || buyStatus.hasReadyCache,
       dashboardCacheWarming: dashboardStatus.warming,
       cacheAgeMs: buyStatus.cacheAgeMs,
       cacheExpiresInMs: buyStatus.cacheExpiresInMs,
@@ -548,31 +563,17 @@ app.get("/api/dashboard", async (req, res) => {
 
 app.get("/api/markets", async (req, res) => {
   try {
-    const limitRaw = String(req.query.limit || "30");
-    const limit = Math.max(1, Math.min(Number(limitRaw) || 30, ALL_SYMBOLS.length));
+    const mode = parseMode(req.query.mode);
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : null;
 
-    const tickers = await getAllPionexSpotTickers();
-
-    const sortedSymbols = tickers
-      .filter((item) => item.quoteSymbol === "USDT")
-      .sort((a, b) => b.amount - a.amount)
-      .map((item) => item.baseSymbol)
-      .filter((symbol, index, arr) => arr.indexOf(symbol) === index && ALL_SYMBOLS.includes(symbol))
-      .slice(0, limit);
-
-    const itemsRaw = await mapWithConcurrency(sortedSymbols, 3, async (symbol) => {
-      const ticker = tickers.find((item) => item.baseSymbol === symbol && item.quoteSymbol === "USDT");
-      return buildMarketListItem(symbol, ticker?.amount ?? 0);
-    });
-
-    const items = itemsRaw
-      .filter((item): item is MarketListItem => item !== null)
-      .sort((a, b) => b.volume24h - a.volume24h);
+    const buyResult = await getDashboardBuyScanResult(limit ?? 10, mode);
+    const items = limit ? buyResult.stage1Markets.slice(0, limit) : buyResult.stage1Markets;
 
     return ok(res, {
       items,
-      total: items.length,
-      degraded: items.length < sortedSymbols.length
+      total: buyResult.stage1Markets.length,
+      degraded: false
     });
   } catch (error) {
     return fail(res, error);
