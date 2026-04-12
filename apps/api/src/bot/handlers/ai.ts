@@ -60,10 +60,10 @@ export function registerAIHandler(bot: Telegraf) {
       const prompt = "text" in ctx.message ? ctx.message.text.replace("/ai", "").trim() : "";
       const { baseSymbol, quoteSymbol, displayPair } = extractPairOrSymbol(prompt);
       const market = await buildMarketContext(baseSymbol, quoteSymbol);
-      const answer = await askAI(
-        `Дай краткую аналитику по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений и объясни риски.`,
-        market
-      );
+      const userQuestion = prompt
+        ? `Ответь на запрос пользователя в контексте криптотрейдинга по паре ${displayPair}: ${prompt}`
+        : `Дай краткий трейдинговый разбор по паре ${displayPair} на 30 дней. Обязательно сохрани deterministic signal без изменений, объясни риски, уровни и сценарий действий.`;
+      const answer = await askAI(userQuestion, market);
 
       await ctx.reply(answer, {
         link_preview_options: {
@@ -72,7 +72,7 @@ export function registerAIHandler(bot: Telegraf) {
       });
     } catch (error) {
       console.error("AI handler error:", error);
-      await ctx.reply("❌ Не удалось сделать AI-анализ. Примеры: /ai BTC или /ai BTC/USDT");
+      await ctx.reply("❌ Не удалось сделать AI-анализ. Примеры: /ai BTC, /ai BTC/USDT или /ai BTC стоит ли входить сейчас");
     }
   });
 }

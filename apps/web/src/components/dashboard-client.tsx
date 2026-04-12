@@ -2,17 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import {
-  AiResponse,
   Candle,
   DashboardData,
-  getAiAnalysis,
   getDashboardBootstrapStatus,
   getDashboardData,
-  getInfoCard,
   getMarketCandles,
   getMarketDetail,
   getMarkets,
-  InfoResponse,
   MarketDetail,
   MarketsResponse,
   refreshBuySignalsCache
@@ -44,10 +40,9 @@ type IndicatorKey =
   | "tradePlan"
   | "confirmation";
 
-type SidePanelMode = "summary" | "history" | "analytics";
 type BuyMode = "soft" | "hard";
 type FullListSortDirection = "desc" | "asc";
-type FullListSortField = "signal" | "pair" | "volume";
+type FullListSortField = "signal" | "pair" | "volume" | "price";
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -1170,6 +1165,7 @@ export default function DashboardClient({
   const [fullListSignalSortDirection, setFullListSignalSortDirection] = useState<FullListSortDirection>("desc");
   const [fullListPairSortDirection, setFullListPairSortDirection] = useState<FullListSortDirection>("asc");
   const [fullListVolumeSortDirection, setFullListVolumeSortDirection] = useState<FullListSortDirection>("desc");
+  const [fullListPriceSortDirection, setFullListPriceSortDirection] = useState<FullListSortDirection>("desc");
   const [fullListSearchQuery, setFullListSearchQuery] = useState("");
 
   const {
@@ -1181,11 +1177,6 @@ export default function DashboardClient({
     reloadDetail
   } = useSelectedMarket(detailSeed, selectedSymbolSeed);
 
-  const [panelMode, setPanelMode] = useState<SidePanelMode>("summary");
-  const [infoData, setInfoData] = useState<InfoResponse | null>(null);
-  const [aiData, setAiData] = useState<AiResponse | null>(null);
-  const [sideLoading, setSideLoading] = useState(false);
-  const [sideError, setSideError] = useState<string | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<Record<IndicatorKey, boolean>>({
     ema20: false,
     ema50: false,
@@ -1258,6 +1249,22 @@ export default function DashboardClient({
         return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
       }
 
+      if (fullListSortField === "price") {
+        const direction = fullListPriceSortDirection === "desc" ? -1 : 1;
+        const priceDelta = (right.priceUsd ?? 0) - (left.priceUsd ?? 0);
+
+        if (priceDelta !== 0) {
+          return priceDelta * direction;
+        }
+
+        const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
+        if (signalTieBreak !== 0) {
+          return signalTieBreak;
+        }
+
+        return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
+      }
+
       const direction = fullListSignalSortDirection === "desc" ? -1 : 1;
       const signalDelta = signalPriority(right.signal) - signalPriority(left.signal);
 
@@ -1272,7 +1279,7 @@ export default function DashboardClient({
 
       return left.pair.localeCompare(right.pair, "ru", { sensitivity: "base" });
     });
-  }, [buySymbols, fullListPairSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
+  }, [buySymbols, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets]);
 
   const selectedListItem = useMemo(() => {
     return (
@@ -1282,9 +1289,6 @@ export default function DashboardClient({
     );
   }, [topBuys, markets, selectedSymbol]);
 
-  useEffect(() => {
-    setSideError(null);
-  }, [selectedSymbol]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1342,39 +1346,8 @@ export default function DashboardClient({
     };
   }, [buyMode, initialSelectedSymbol, setSelectedSymbol]);
 
-  async function handleLoadInfo() {
-    setPanelMode("history");
-    setSideLoading(true);
-    setSideError(null);
-
-    try {
-      const response = await getInfoCard(selectedSymbol);
-      setInfoData(response);
-    } catch (error) {
-      setSideError(error instanceof Error ? error.message : "Не удалось загрузить справку");
-    } finally {
-      setSideLoading(false);
-    }
-  }
-
-  async function handleLoadAi() {
-    setPanelMode("analytics");
-    setSideLoading(true);
-    setSideError(null);
-
-    try {
-      const response = await getAiAnalysis(selectedSymbol);
-      setAiData(response);
-    } catch (error) {
-      setSideError(error instanceof Error ? error.message : "Не удалось загрузить аналитику");
-    } finally {
-      setSideLoading(false);
-    }
-  }
 
   async function handleRefreshSignal() {
-    setPanelMode("summary");
-    setSideError(null);
     setBootstrapError(null);
     setBootstrapLoading(true);
     setLoaderMessage(
@@ -1415,12 +1388,7 @@ export default function DashboardClient({
   const summaryLines = buildSummaryLines(detail, dashboard);
   const managementLines = buildManagementLines(detail, dashboard, selectedSymbol);
 
-  const sideTextLines =
-    panelMode === "summary"
-      ? [...summaryLines, "", "Как сопровождать сделку:", ...managementLines]
-      : panelMode === "history"
-        ? normalizeTextBlock(infoData?.text)
-        : normalizeTextBlock(aiData?.text);
+  const sideTextLines = [...summaryLines, "", "Как сопровождать сделку:", ...managementLines];
 
   const buyCommandLines = normalizeTextBlock(dashboard?.buyCommandText);
 
@@ -1574,10 +1542,12 @@ export default function DashboardClient({
           </div>
 
           <div className="card dashboard-list-card dashboard-full-card">
-            <div className="list-title-row full-list-title-row">
-              <div className="full-list-title-group">
-                <h3>Полный список</h3>
-                <span className="muted">{fullList.length}</span>
+            <div className="full-list-header">
+              <div className="list-title-row full-list-title-row">
+                <div className="full-list-title-group">
+                  <h3>Полный список</h3>
+                  <span className="muted">{fullList.length} пар</span>
+                </div>
               </div>
 
               <div className="full-list-sort-group">
@@ -1600,6 +1570,23 @@ export default function DashboardClient({
 
                 <button
                   type="button"
+                  className={fullListSortField === "volume" ? "full-list-sort-button active" : "full-list-sort-button"}
+                  aria-label={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
+                  title={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
+                  onClick={() => {
+                    setFullListSortField("volume");
+                    setFullListVolumeSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+                  }}
+                >
+                  <span className="full-list-sort-label">Объем</span>
+                  <span className="full-list-sort-arrows" aria-hidden="true">
+                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   className={fullListSortField === "signal" ? "full-list-sort-button active" : "full-list-sort-button"}
                   aria-label={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
                   title={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
@@ -1617,31 +1604,31 @@ export default function DashboardClient({
 
                 <button
                   type="button"
-                  className={fullListSortField === "volume" ? "full-list-sort-button active" : "full-list-sort-button"}
-                  aria-label={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
-                  title={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
+                  className={fullListSortField === "price" ? "full-list-sort-button active" : "full-list-sort-button"}
+                  aria-label={`Сортировка по цене: ${fullListPriceSortDirection === "desc" ? "дорогие сверху" : "дешевые сверху"}`}
+                  title={`Сортировка по цене: ${fullListPriceSortDirection === "desc" ? "дорогие сверху" : "дешевые сверху"}`}
                   onClick={() => {
-                    setFullListSortField("volume");
-                    setFullListVolumeSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+                    setFullListSortField("price");
+                    setFullListPriceSortDirection((current) => (current === "desc" ? "asc" : "desc"));
                   }}
                 >
-                  <span className="full-list-sort-label">Объем</span>
+                  <span className="full-list-sort-label">Цена</span>
                   <span className="full-list-sort-arrows" aria-hidden="true">
-                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
-                    <span className={fullListSortField === "volume" && fullListVolumeSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
+                    <span className={fullListSortField === "price" && fullListPriceSortDirection === "asc" ? "sort-arrow active" : "sort-arrow"}>↑</span>
+                    <span className={fullListSortField === "price" && fullListPriceSortDirection === "desc" ? "sort-arrow active" : "sort-arrow"}>↓</span>
                   </span>
                 </button>
               </div>
-            </div>
 
-            <div className="full-list-search-row">
-              <input
-                type="text"
-                value={fullListSearchQuery}
-                onChange={(event) => setFullListSearchQuery(event.target.value)}
-                placeholder="Поиск по имени криптовалюты"
-                className="full-list-search-input"
-              />
+              <div className="full-list-search-row">
+                <input
+                  type="text"
+                  value={fullListSearchQuery}
+                  onChange={(event) => setFullListSearchQuery(event.target.value)}
+                  placeholder="Поиск по имени криптовалюты"
+                  className="full-list-search-input"
+                />
+              </div>
             </div>
 
             <div className="signal-list signal-list-compact fill-scroll">
@@ -1652,7 +1639,6 @@ export default function DashboardClient({
                   className={item.symbol === selectedSymbol ? "market-row active" : "market-row"}
                   onClick={() => {
                     setSelectedSymbol(item.symbol);
-                    setPanelMode("summary");
                   }}
                 >
                   <div className="market-row-left">
@@ -1675,24 +1661,17 @@ export default function DashboardClient({
             <div className="list-title-row summary-head">
               <div className="summary-title-block">
                 <h3>Информация</h3>
-                <div className="summary-section-caption">
-                  {panelMode === "summary"
-                    ? "Сводка по сигналу"
-                    : panelMode === "history"
-                      ? "История"
-                      : "Аналитика"}
-                </div>
+                <div className="summary-section-caption">Сводка по сигналу</div>
               </div>
 
               {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
             </div>
 
-            {detailLoading || sideLoading ? <p>Загрузка данных...</p> : null}
-            {sideError ? <p>{sideError}</p> : null}
+            {detailLoading ? <p>Загрузка данных...</p> : null}
 
-            {!detailLoading && !sideLoading && !sideError ? (
+            {!detailLoading ? (
               <>
-                {panelMode === "summary" && detail ? (
+                {detail ? (
                   <div className="summary-metrics-grid">
                     <div className="summary-metric summary-metric-inline">
                       <span>Сигнал</span>
@@ -1739,23 +1718,7 @@ export default function DashboardClient({
           <div className="dashboard-actions">
             <button
               type="button"
-              className={panelMode === "history" ? "action-button active" : "action-button"}
-              onClick={handleLoadInfo}
-            >
-              История
-            </button>
-
-            <button
-              type="button"
-              className={panelMode === "analytics" ? "action-button active" : "action-button"}
-              onClick={handleLoadAi}
-            >
-              Аналитика
-            </button>
-
-            <button
-              type="button"
-              className={panelMode === "summary" ? "action-button primary active" : "action-button primary"}
+              className="action-button primary active"
               onClick={handleRefreshSignal}
             >
               Получить сигналы
