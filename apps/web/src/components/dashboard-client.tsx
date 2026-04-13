@@ -51,6 +51,25 @@ type FullListSortState = {
   signalDirection: FullListSortDirection;
   priceDirection: FullListSortDirection;
 };
+
+type IssueNotification = {
+  id: string;
+  title: string;
+  message: string;
+  severity: "error" | "warning";
+  createdAt: number;
+  visibleUntil: number;
+  seenInPanel: boolean;
+  sourceKey: string;
+};
+
+type ReportIssueInput = {
+  title: string;
+  message: string;
+  severity?: "error" | "warning";
+  sourceKey?: string;
+};
+
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -154,6 +173,14 @@ function formatAxisTime(value: string | number | null | undefined, interval: Cha
   }
 
   return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+function formatNotificationTimestamp(value: number): string {
+  return formatDateTime(value);
+}
+
+function buildIssueKey(sourceKey: string, message: string): string {
+  return `${sourceKey}::${message.trim()}`;
 }
 
 function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData | null): string[] {
@@ -554,10 +581,12 @@ async function waitUntilBuySignalsCacheReady(mode: BuyMode) {
 
 function TradingChart({
   detail,
-  activeIndicators
+  activeIndicators,
+  onIssue
 }: {
   detail: MarketDetail | null;
   activeIndicators: Record<IndicatorKey, boolean>;
+  onIssue?: (issue: ReportIssueInput) => void;
 }) {
   const [interval, setIntervalValue] = useState<ChartInterval>("1H");
   const [windowValue, setWindowValue] = useState<ChartWindow>("1Y");
@@ -701,8 +730,14 @@ function TradingChart({
         setStartIndex((current) => current + olderCandles.length);
         setHasMoreOlder(response.hasMore && olderCandles.length > 0);
       })
-      .catch(() => {
+      .catch((error) => {
         setHasMoreOlder(false);
+        onIssue?.({
+          title: "Не удалось догрузить свечи",
+          message: error instanceof Error ? error.message : "Ошибка загрузки истории свечей.",
+          severity: "error",
+          sourceKey: `candles:${detail?.market.pair.display ?? "unknown"}:${fetchInterval}`
+        });
       })
       .finally(() => {
         pendingOlderRequestRef.current = false;
@@ -1184,6 +1219,9 @@ export default function DashboardClient({
   const [fullListSearchQuery, setFullListSearchQuery] = useState("");
   const [showStage1Only, setShowStage1Only] = useState(false);
   const [showStage2Only, setShowStage2Only] = useState(false);
+  const [issueNotifications, setIssueNotifications] = useState<IssueNotification[]>([]);
+  const [issuesOpen, setIssuesOpen] = useState(false);
+  const [issuesNowTs, setIssuesNowTs] = useState(() => Date.now());
 
   const {
     selectedSymbol,
@@ -1193,6 +1231,49 @@ export default function DashboardClient({
     detailError,
     reloadDetail
   } = useSelectedMarket(detailSeed, selectedSymbolSeed);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      const now = Date.now();
+      setIssuesNowTs(now);
+      setIssueNotifications((current) => current.filter((item) => now - item.createdAt < 7 * 24 * 60 * 60 * 1000));
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  useEffect(() => {
+    if (bootstrapError) {
+      reportIssue({
+        title: "Часть данных недоступна",
+        message: bootstrapError,
+        severity: "error",
+        sourceKey: "bootstrap-error"
+      });
+    }
+  }, [bootstrapError]);
+
+  useEffect(() => {
+    if (detailError) {
+      reportIssue({
+        title: "Не удалось загрузить выбранную пару",
+        message: detailError,
+        severity: "error",
+        sourceKey: `detail-error:${selectedSymbol}`
+      });
+    }
+  }, [detailError, selectedSymbol]);
+
+  useEffect(() => {
+    if (dashboard?.degraded || markets?.degraded) {
+      reportIssue({
+        title: "Фронт работает в деградированном режиме",
+        message: "Часть данных backend сейчас не отдал полностью. Интерфейс продолжает работать без падения всей страницы.",
+        severity: "warning",
+        sourceKey: `degraded:${dashboard?.generatedAt ?? "unknown"}:${buyMode}`
+      });
+    }
+  }, [buyMode, dashboard?.degraded, dashboard?.generatedAt, markets?.degraded]);
 
   const [activeIndicators, setActiveIndicators] = useState<Record<IndicatorKey, boolean>>({
     ema20: false,
@@ -1212,6 +1293,56 @@ export default function DashboardClient({
   const fullListVolumeSortDirection = fullListSort.volumeDirection;
   const fullListSignalSortDirection = fullListSort.signalDirection;
   const fullListPriceSortDirection = fullListSort.priceDirection;
+
+  function reportIssue(input: ReportIssueInput) {
+    const createdAt = Date.now();
+    const severity = input.severity ?? "error";
+    const sourceKey = input.sourceKey ?? input.title;
+    const dedupeKey = buildIssueKey(sourceKey, input.message);
+
+    setIssueNotifications((current) => {
+      const existingIndex = current.findIndex((item) => buildIssueKey(item.sourceKey, item.message) === dedupeKey);
+
+      if (existingIndex >= 0) {
+        const next = [...current];
+        const existing = next[existingIndex];
+        next[existingIndex] = {
+          ...existing,
+          title: input.title,
+          severity,
+          createdAt,
+          visibleUntil: createdAt + 60_000
+        };
+        return next.sort((a, b) => b.createdAt - a.createdAt);
+      }
+
+      return [
+        {
+          id: `${createdAt}-${Math.random().toString(36).slice(2, 10)}`,
+          title: input.title,
+          message: input.message,
+          severity,
+          createdAt,
+          visibleUntil: createdAt + 60_000,
+          seenInPanel: false,
+          sourceKey
+        },
+        ...current
+      ].sort((a, b) => b.createdAt - a.createdAt);
+    });
+  }
+
+  function handleToggleIssues() {
+    setIssuesOpen((current) => {
+      const nextOpen = !current;
+
+      if (!current) {
+        setIssueNotifications((items) => items.map((item) => ({ ...item, seenInPanel: true })));
+      }
+
+      return nextOpen;
+    });
+  }
 
   function handleFullListSortClick(field: FullListSortField) {
     setFullListSort((current) => {
@@ -1554,10 +1685,27 @@ export default function DashboardClient({
     };
   }, [dashboard, detail, selectedListItem]);
 
-  const topError = bootstrapError ?? detailError;
+  const unreadIssuesCount = issueNotifications.filter((item) => !item.seenInPanel).length;
+  const visibleIssues = issueNotifications.filter((item) => item.visibleUntil > issuesNowTs);
 
   return (
     <>
+      {visibleIssues.length ? (
+        <div className="issues-toast-stack" aria-live="polite" aria-atomic="false">
+          {visibleIssues.map((issue) => (
+            <div
+              key={issue.id}
+              className={issue.severity === "warning" ? "issue-toast warning" : "issue-toast"}
+            >
+              <div className="issue-toast-title-row">
+                <strong>{issue.title}</strong>
+                <span>{formatNotificationTimestamp(issue.createdAt)}</span>
+              </div>
+              <p>{issue.message}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {bootstrapLoading ? (
         <div className="loader-overlay">
           <div className="loader-card">
@@ -1571,20 +1719,11 @@ export default function DashboardClient({
         </div>
       ) : null}
 
-      {topError ? (
-        <section className="section section-tight">
-          <div className="card warning-card">
-            <h3>Часть данных недоступна</h3>
-            <p>Dashboard продолжает работать в деградированном режиме и не падает целиком.</p>
-            <p style={{ marginTop: 12 }}>{topError}</p>
-          </div>
-        </section>
-      ) : null}
 
       <section className="section section-tight dashboard-grid" aria-busy={bootstrapLoading}>
         <div className="dashboard-left-stack">
           <div className="card dashboard-chart-card">
-            <TradingChart detail={detail} activeIndicators={activeIndicators} />
+            <TradingChart detail={detail} activeIndicators={activeIndicators} onIssue={reportIssue} />
           </div>
 
           <div className={indicatorsOpen ? "card dashboard-indicators-card indicators-open" : "card dashboard-indicators-card"}>
@@ -1819,12 +1958,42 @@ export default function DashboardClient({
           <div className="card dashboard-summary-card">
             <div className="list-title-row summary-head">
               <div className="summary-title-block">
-                <h3>Информация</h3>
+                <div className="summary-title-row-with-bell">
+                  <h3>Информация</h3>
+                  <button
+                    type="button"
+                    className={issuesOpen ? "issues-bell-button active" : "issues-bell-button"}
+                    onClick={handleToggleIssues}
+                    aria-label="Показать проблемные сообщения"
+                    title="Показать проблемные сообщения"
+                  >
+                    <span className="issues-bell-icon" aria-hidden="true">🔔</span>
+                    {unreadIssuesCount > 0 ? <span className="issues-bell-badge">{unreadIssuesCount}</span> : null}
+                  </button>
+                </div>
                 <div className="summary-section-caption">Сводка по сигналу</div>
               </div>
 
               {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
             </div>
+
+            {issuesOpen ? (
+              <div className="issues-panel">
+                {issueNotifications.length ? (
+                  issueNotifications.map((issue) => (
+                    <div key={issue.id} className="issues-panel-item">
+                      <div className="issues-panel-item-head">
+                        <strong>{issue.title}</strong>
+                        <span>{formatNotificationTimestamp(issue.createdAt)}</span>
+                      </div>
+                      <p>{issue.message}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="issues-panel-empty">Проблемных сообщений пока нет.</div>
+                )}
+              </div>
+            ) : null}
 
             {detailLoading ? <p>Загрузка данных...</p> : null}
 

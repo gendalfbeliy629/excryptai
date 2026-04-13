@@ -30,7 +30,9 @@ const BACKEND_URL = normalizeBackendUrl(
 );
 
 function buildTargetUrl(pathSegments: string[], request: NextRequest): string {
-  const path = pathSegments.join("/");
+  const path = pathSegments
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
   const url = new URL(`${BACKEND_URL}/${path}`);
 
   request.nextUrl.searchParams.forEach((value, key) => {
