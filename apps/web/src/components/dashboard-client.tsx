@@ -690,7 +690,7 @@ function TradingChart({
     if (autoScroll) {
       setStartIndex(maxStartIndex);
     }
-  }, [autoScroll, maxStartIndex, loadedCandles.length]);
+  }, [autoScroll, maxStartIndex]);
 
   useEffect(() => {
     setStartIndex((current) => Math.max(0, Math.min(maxStartIndex, current)));
@@ -892,6 +892,7 @@ function TradingChart({
     }
 
     const shiftSteps = Math.max(1, Math.round(Math.abs((event.deltaX || event.deltaY) / 48)));
+    setAutoScroll(false);
     setStartIndex((current) => {
       const next = current + direction * shiftSteps;
       return Math.max(0, Math.min(maxStartIndex, next));
@@ -989,7 +990,6 @@ function TradingChart({
         onMouseEnter={() => setIsChartHovered(true)}
         onMouseLeave={() => setIsChartHovered(false)}
       >
-        {loadingOlder ? <div className="tv-history-loader">Загружаем более ранние свечи…</div> : null}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${totalHeight}`}
@@ -1971,7 +1971,10 @@ export default function DashboardClient({
                     {unreadIssuesCount > 0 ? <span className="issues-bell-badge">{unreadIssuesCount}</span> : null}
                   </button>
                 </div>
-                <div className="summary-section-caption">Сводка по сигналу</div>
+                <div className="summary-section-captions">
+                  <div className="summary-section-caption">Сводка по сигналу</div>
+                  <div className="summary-section-caption">Уведомления</div>
+                </div>
               </div>
 
               {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
@@ -1990,7 +1993,7 @@ export default function DashboardClient({
                     </div>
                   ))
                 ) : (
-                  <div className="issues-panel-empty">Проблемных сообщений пока нет.</div>
+                  <div className="issues-panel-empty">Уведомления</div>
                 )}
               </div>
             ) : null}
