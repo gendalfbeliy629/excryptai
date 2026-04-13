@@ -1,78 +1,35 @@
 ## Summary
-Кратко опиши, что сделано и зачем.
+- What changed:
+- Why:
 
----
+## Files changed
+- [ ] apps/api
+- [ ] apps/web
+- [ ] shared/root config
+- [ ] CI / GitHub Actions
+- [ ] Railway / deploy files
 
-## Related issue
-Closes #
+## Redis / cache impact
+- Affected keys:
+- [ ] buy-cache:*
+- [ ] dashboard-cache:*
+- [ ] signal:*
+- [ ] candles:*
+- TTL changes:
+- Schema changes:
+- Backward compatibility note:
 
----
+## Railway impact
+- Startup / build / healthcheck impact:
+- Env var impact:
+- Deploy risk:
 
-## Business / product context
-Какую проблему решает изменение и какой пользовательский или системный сценарий затронут.
+## Verification
+- [ ] pnpm -r --if-present lint
+- [ ] pnpm -r --if-present typecheck
+- [ ] pnpm -r --if-present build
+- [ ] Manual smoke check
 
----
-
-## Changes made
-- 
-- 
-- 
-
----
-
-## What was NOT done
-- 
-- 
-
----
-
-## How to test
-1. 
-2. 
-3. 
-
----
-
-## Affected areas
-- [ ] API
-- [ ] Web
-- [ ] Bot
-- [ ] DB
-- [ ] Infra
-- [ ] Docs
-- [ ] Business rules
-
----
-
-## Screenshots / Examples / Response samples
-Добавь скриншоты, JSON, примеры ответов API, если применимо.
-
----
-
-## Risks / Impact
-- Влияет на:
-- Обратная совместимость: да / нет
-- Требует миграции: да / нет
-- Требует изменения env/config: да / нет
-
----
-
-## Documentation
-- [ ] README не требует обновления
-- [ ] README обновлён
-- [ ] docs не требуют обновления
-- [ ] docs обновлены
-- [ ] Wiki требует обновления после merge
-- [ ] Wiki не требуется
-
----
-
-## Checklist
-- [ ] Issue связан
-- [ ] Требования выполнены
-- [ ] Acceptance Criteria покрыты
-- [ ] Локально проверено
-- [ ] CI зелёный
-- [ ] Нет лишнего кода / debug-логов
-- [ ] Документация обновлена
-- [ ] Нужны release notes
+## Rollback
+- Revert commit / PR
+- Restore previous cache readers/writers if needed

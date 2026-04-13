@@ -1222,6 +1222,7 @@ export default function DashboardClient({
   const [issueNotifications, setIssueNotifications] = useState<IssueNotification[]>([]);
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [issuesNowTs, setIssuesNowTs] = useState(() => Date.now());
+  const [infoTab, setInfoTab] = useState<"overview" | "parameters" | "history">("overview");
 
   const {
     selectedSymbol,
@@ -1674,6 +1675,10 @@ export default function DashboardClient({
 
   const sideTextLines = [...summaryLines, "", "Как сопровождать сделку:", ...managementLines];
 
+  const selectedBuyCandidate = dashboard?.topBuys.find(
+    (item) => item.pair === (detail?.market.pair.display ?? selectedSymbol)
+  );
+
 
   useEffect(() => {
     const pair = detail?.market.pair.display ?? selectedListItem?.pair ?? dashboard?.topBuys[0]?.pair ?? "BTC/USDT";
@@ -1971,13 +1976,33 @@ export default function DashboardClient({
                     {unreadIssuesCount > 0 ? <span className="issues-bell-badge">{unreadIssuesCount}</span> : null}
                   </button>
                 </div>
-                <div className="summary-section-captions">
-                  <div className="summary-section-caption">Сводка по сигналу</div>
-                  <div className="summary-section-caption">Уведомления</div>
-                </div>
               </div>
 
               {selectedListItem ? <span className="pill summary-pair-pill">{selectedListItem.pair}</span> : null}
+            </div>
+
+            <div className="info-tabs">
+              <button
+                type="button"
+                className={infoTab === "overview" ? "info-tab-button active" : "info-tab-button"}
+                onClick={() => setInfoTab("overview")}
+              >
+                Обзор
+              </button>
+              <button
+                type="button"
+                className={infoTab === "parameters" ? "info-tab-button active" : "info-tab-button"}
+                onClick={() => setInfoTab("parameters")}
+              >
+                Параметры
+              </button>
+              <button
+                type="button"
+                className={infoTab === "history" ? "info-tab-button active" : "info-tab-button"}
+                onClick={() => setInfoTab("history")}
+              >
+                История
+              </button>
             </div>
 
             {issuesOpen ? (
@@ -2001,48 +2026,166 @@ export default function DashboardClient({
             {detailLoading ? <p>Загрузка данных...</p> : null}
 
             {!detailLoading ? (
-              <>
-                {detail ? (
-                  <div className="summary-metrics-grid">
-                    <div className="summary-metric summary-metric-inline">
-                      <span>Сигнал</span>
-                      <strong className={signalClassName(detail.signal.signal)}>
-                        {detail.signal.signal}
+              <div className="info-tab-content fill-scroll">
+                {infoTab === "overview" && detail ? (
+                  <>
+                    <div className="summary-metrics-grid">
+                      <div className="summary-metric summary-metric-inline">
+                        <span>Сигнал</span>
+                        <strong className={signalClassName(detail.signal.signal)}>
+                          {detail.signal.signal}
+                        </strong>
+                      </div>
+                      <div className="summary-metric summary-metric-inline">
+                        <span>Цена</span>
+                        <strong>{formatPrice(detail.market.spot.priceUsd)}</strong>
+                      </div>
+                      <div className="summary-metric summary-metric-inline">
+                        <span>24ч</span>
+                        <strong>{formatPercent(detail.market.spot.change24h)}</strong>
+                      </div>
+                      <div className="summary-metric summary-metric-inline">
+                        <span>30д</span>
+                        <strong>{formatPercent(detail.market.technicals.change30d)}</strong>
+                      </div>
+                      <div className="summary-metric summary-metric-inline">
+                        <span>RSI 14</span>
+                        <strong>{formatNumber(detail.market.technicals.rsi14)}</strong>
+                      </div>
+                      <div className="summary-metric summary-metric-inline">
+                        <span>TVL</span>
+                        <strong>{formatCompactUsd(detail.market.liquidity.totalTvlUsd)}</strong>
+                      </div>
+                    </div>
+                    <div className="summary-text-block">
+                      {sideTextLines.map((line, index) =>
+                        line === "" ? (
+                          <div className="summary-gap" key={`gap-${index}`} />
+                        ) : (
+                          <p key={`${line}-${index}`}>{line}</p>
+                        )
+                      )}
+                    </div>
+                  </>
+                ) : infoTab === "parameters" && detail ? (
+                  <div className="parameters-grid">
+                    <div className="parameter-row">
+                      <span>Вход</span>
+                      <strong>
+                        {detail.signal.entryZoneLow !== null && detail.signal.entryZoneHigh !== null
+                          ? `${formatPrice(detail.signal.entryZoneLow)} - ${formatPrice(detail.signal.entryZoneHigh)}`
+                          : "—"}
                       </strong>
                     </div>
-                    <div className="summary-metric summary-metric-inline">
-                      <span>Цена</span>
-                      <strong>{formatPrice(detail.market.spot.priceUsd)}</strong>
+                    <div className="parameter-row">
+                      <span>Стоп лосс</span>
+                      <strong>
+                        {detail.signal.protectiveStop !== null
+                          ? formatPrice(detail.signal.protectiveStop)
+                          : "—"}
+                      </strong>
                     </div>
-                    <div className="summary-metric summary-metric-inline">
-                      <span>24ч</span>
-                      <strong>{formatPercent(detail.market.spot.change24h)}</strong>
+                    <div className="parameter-row">
+                      <span>Безубыток</span>
+                      <strong>
+                        {detail.signal.breakEvenActivationPrice !== null
+                          ? formatPrice(detail.signal.breakEvenActivationPrice)
+                          : "—"}
+                      </strong>
                     </div>
-                    <div className="summary-metric summary-metric-inline">
-                      <span>30д</span>
-                      <strong>{formatPercent(detail.market.technicals.change30d)}</strong>
+                    <div className="parameter-row">
+                      <span>ATR 1H</span>
+                      <strong>
+                        {detail.signal.atr1hPercent !== null
+                          ? `${formatNumber(detail.signal.atr1hPercent)}%`
+                          : "—"}
+                      </strong>
                     </div>
-                    <div className="summary-metric summary-metric-inline">
-                      <span>RSI 14</span>
-                      <strong>{formatNumber(detail.market.technicals.rsi14)}</strong>
+                    <div className="parameter-row">
+                      <span>Поддержка</span>
+                      <strong>
+                        {detail.signal.nearestSupport !== null
+                          ? formatPrice(detail.signal.nearestSupport)
+                          : "—"}
+                      </strong>
                     </div>
-                    <div className="summary-metric summary-metric-inline">
-                      <span>TVL</span>
-                      <strong>{formatCompactUsd(detail.market.liquidity.totalTvlUsd)}</strong>
+                    <div className="parameter-row">
+                      <span>Сопр. 1</span>
+                      <strong>
+                        {detail.signal.nearestResistance !== null
+                          ? formatPrice(detail.signal.nearestResistance)
+                          : "—"}
+                      </strong>
                     </div>
+                    <div className="parameter-row">
+                      <span>Сопр. 2</span>
+                      <strong>
+                        {detail.signal.nextResistance !== null
+                          ? formatPrice(detail.signal.nextResistance)
+                          : "—"}
+                      </strong>
+                    </div>
+                    <div className="parameter-row">
+                      <span>Трейлинг</span>
+                      <strong>
+                        {detail.signal.trailingAtrMultiplier > 0
+                          ? `${detail.signal.trailingAtrMultiplier}x ATR`
+                          : "—"}
+                      </strong>
+                    </div>
+                    {selectedBuyCandidate ? (
+                      <>
+                        <div className="parameter-row">
+                          <span>TP1 / R</span>
+                          <strong>{selectedBuyCandidate.riskRewardTp1.toFixed(1)}</strong>
+                        </div>
+                        <div className="parameter-row">
+                          <span>TP2 / R</span>
+                          <strong>{selectedBuyCandidate.riskRewardTp2.toFixed(1)}</strong>
+                        </div>
+                        <div className="parameter-row">
+                          <span>TP3 / R</span>
+                          <strong>{selectedBuyCandidate.riskRewardTp3.toFixed(1)}</strong>
+                        </div>
+                        <div className="parameter-row">
+                          <span>Риск</span>
+                          <strong>{selectedBuyCandidate.riskPercent.toFixed(1)}%</strong>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
-                ) : null}
-
-                <div className="summary-text-block fill-scroll">
-                  {sideTextLines.map((line, index) =>
-                    line === "" ? (
-                      <div className="summary-gap" key={`gap-${index}`} />
-                    ) : (
-                      <p key={`${line}-${index}`}>{line}</p>
-                    )
-                  )}
-                </div>
-              </>
+                ) : infoTab === "history" && detail ? (
+                  <div className="history-list">
+                    {detail.signal.positives.length > 0 && (
+                      <>
+                        <div className="summary-section-caption" style={{ marginBottom: "4px" }}>Положительные факторы</div>
+                        {detail.signal.positives.map((item, index) => (
+                          <div key={`pos-${index}`} className="history-item">
+                            <span className="history-item-date">+</span>
+                            <span className="history-item-value">{item}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {detail.signal.negatives.length > 0 && (
+                      <>
+                        <div className="summary-section-caption" style={{ marginTop: "8px", marginBottom: "4px" }}>Отрицательные факторы</div>
+                        {detail.signal.negatives.map((item, index) => (
+                          <div key={`neg-${index}`} className="history-item">
+                            <span className="history-item-date">−</span>
+                            <span className="history-item-value">{item}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {detail.signal.positives.length === 0 && detail.signal.negatives.length === 0 && (
+                      <div className="issues-panel-empty">Нет данных</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="issues-panel-empty">Выберите пару</div>
+                )}
+              </div>
             ) : null}
           </div>
 

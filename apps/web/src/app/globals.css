@@ -177,7 +177,7 @@ button {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2.78fr) minmax(300px, 0.88fr) minmax(285px, 0.75fr);
+  grid-template-columns: minmax(0, 2.32fr) minmax(250px, 0.6fr) minmax(400px, 1.49fr);
   gap: clamp(6px, 0.45vw, 14px);
   min-height: calc(100vh - (var(--outer-padding-x) * 2));
   height: calc(100vh - (var(--outer-padding-x) * 2));
@@ -608,6 +608,98 @@ button {
 
 .summary-gap {
   height: 6px;
+}
+
+.info-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.info-tab-button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+
+.info-tab-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.info-tab-button.active {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--border);
+  border-bottom-color: var(--panel);
+}
+
+.info-tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.parameters-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.parameter-row {
+  border: 1px solid #233244;
+  background: #111926;
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.parameter-row span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.parameter-row strong {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid #233244;
+  background: #111926;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.history-item-date {
+  color: var(--muted);
+}
+
+.history-item-value {
+  color: var(--text);
 }
 
 .dashboard-actions {
