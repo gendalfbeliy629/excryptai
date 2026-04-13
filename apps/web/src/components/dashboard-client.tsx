@@ -192,9 +192,11 @@ function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData
 function buildManagementLines(
   detail: MarketDetail | null,
   dashboard: DashboardData | null,
-  selectedSymbol: string
+  selectedMarketKey: string
 ): string[] {
-  const buyItem = dashboard?.topBuys.find((item) => item.symbol === selectedSymbol);
+  const buyItem =
+    dashboard?.topBuys.find((item) => item.pair === selectedMarketKey) ??
+    dashboard?.topBuys.find((item) => item.symbol === selectedMarketKey);
 
   if (buyItem?.managementPlan?.length) {
     return buyItem.managementPlan;
@@ -1157,7 +1159,7 @@ export default function DashboardClient({
   const [buyMode, setBuyMode] = useState<BuyMode>("soft");
   const [dashboard, setDashboard] = useState<DashboardData | null>(initialDashboard);
   const [markets, setMarkets] = useState<MarketsResponse | null>(initialMarkets);
-  const [selectedSymbolSeed, setSelectedSymbolSeed] = useState(initialSelectedSymbol || "BTC");
+  const [selectedSymbolSeed, setSelectedSymbolSeed] = useState(initialSelectedSymbol || "BTC/USDT");
   const [detailSeed, setDetailSeed] = useState<MarketDetail | null>(initialDetail);
   const [bootstrapLoading, setBootstrapLoading] = useState(
     !initialDashboard || !initialMarkets || !initialDetail
@@ -1173,7 +1175,7 @@ export default function DashboardClient({
   );
   const [indicatorsOpen, setIndicatorsOpen] = useState(false);
   const [fullListSort, setFullListSort] = useState<FullListSortState>({
-    field: "signal",
+    field: "volume",
     signalDirection: "desc",
     pairDirection: "asc",
     volumeDirection: "desc",
@@ -1252,7 +1254,11 @@ export default function DashboardClient({
     const searchQuery = fullListSearchQuery.trim().toLocaleLowerCase("ru");
     const sourceItems = markets?.items?.length ? markets.items : dashboard?.allStage1Markets ?? [];
 
-    const compareNumbers = (left: number | null | undefined, right: number | null | undefined, direction: FullListSortDirection) => {
+    const compareNumbers = (
+      left: number | null | undefined,
+      right: number | null | undefined,
+      direction: FullListSortDirection
+    ) => {
       const safeLeft = Number.isFinite(left as number) ? Number(left) : 0;
       const safeRight = Number.isFinite(right as number) ? Number(right) : 0;
 
@@ -1265,7 +1271,67 @@ export default function DashboardClient({
       return direction === "asc" ? delta : -delta;
     };
 
-    const items = sourceItems.filter((item) => {
+    const resolveListKey = (item: (typeof sourceItems)[number]) => {
+      const pairKey = item.pair?.trim().toUpperCase();
+      if (pairKey) return pairKey;
+      const symbolKey = item.symbol?.trim().toUpperCase();
+      if (symbolKey) return symbolKey;
+      return `${item.name ?? "UNKNOWN"}:${item.priceUsd ?? "0"}`;
+    };
+
+    const preferItem = (
+      current: (typeof sourceItems)[number],
+      incoming: (typeof sourceItems)[number]
+    ) => {
+      const currentStageRank = current.stage2Passed ? 2 : current.stage1Passed ? 1 : 0;
+      const incomingStageRank = incoming.stage2Passed ? 2 : incoming.stage1Passed ? 1 : 0;
+
+      if (incomingStageRank !== currentStageRank) {
+        return incomingStageRank > currentStageRank ? incoming : current;
+      }
+
+      const currentScore = Number.isFinite(current.score) ? current.score : 0;
+      const incomingScore = Number.isFinite(incoming.score) ? incoming.score : 0;
+      if (incomingScore !== currentScore) {
+        return incomingScore > currentScore ? incoming : current;
+      }
+
+      const currentVolume = Number.isFinite(current.volume24h as number) ? Number(current.volume24h) : 0;
+      const incomingVolume = Number.isFinite(incoming.volume24h as number) ? Number(incoming.volume24h) : 0;
+      if (incomingVolume !== currentVolume) {
+        return incomingVolume > currentVolume ? incoming : current;
+      }
+
+      const currentPrice = Number.isFinite(current.priceUsd as number) ? Number(current.priceUsd) : 0;
+      const incomingPrice = Number.isFinite(incoming.priceUsd as number) ? Number(incoming.priceUsd) : 0;
+      if (incomingPrice !== currentPrice) {
+        return incomingPrice > currentPrice ? incoming : current;
+      }
+
+      return compareStrings(incoming.pair, current.pair, "asc") < 0 ? incoming : current;
+    };
+
+    const dedupedMap = new Map<string, (typeof sourceItems)[number]>();
+
+    for (const item of sourceItems) {
+      const key = resolveListKey(item);
+      const existing = dedupedMap.get(key);
+
+      if (!existing) {
+        dedupedMap.set(key, item);
+        continue;
+      }
+
+      const preferred = preferItem(existing, item);
+      dedupedMap.set(key, {
+        ...preferred,
+        stage1Passed: Boolean(existing.stage1Passed || item.stage1Passed || preferred.stage1Passed),
+        stage2Passed: Boolean(existing.stage2Passed || item.stage2Passed || preferred.stage2Passed),
+        volume24h: Math.max(existing.volume24h ?? 0, item.volume24h ?? 0, preferred.volume24h ?? 0)
+      });
+    }
+
+    const items = Array.from(dedupedMap.values()).filter((item) => {
       if (showStage2Only && !item.stage2Passed) {
         return false;
       }
@@ -1292,11 +1358,11 @@ export default function DashboardClient({
         const nameDelta = compareStrings(left.name, right.name, fullListPairSortDirection);
         if (nameDelta !== 0) return nameDelta;
 
+        const volumeTieBreak = compareNumbers(left.volume24h ?? 0, right.volume24h ?? 0, "desc");
+        if (volumeTieBreak !== 0) return volumeTieBreak;
+
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
-
-        const scoreTieBreak = compareNumbers(left.score, right.score, "desc");
-        if (scoreTieBreak !== 0) return scoreTieBreak;
 
         return compareStrings(left.symbol, right.symbol, "asc");
       }
@@ -1307,6 +1373,9 @@ export default function DashboardClient({
 
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
+
+        const scoreTieBreak = compareNumbers(left.score, right.score, "desc");
+        if (scoreTieBreak !== 0) return scoreTieBreak;
 
         const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
         if (pairTieBreak !== 0) return pairTieBreak;
@@ -1321,6 +1390,9 @@ export default function DashboardClient({
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
 
+        const volumeTieBreak = compareNumbers(left.volume24h ?? 0, right.volume24h ?? 0, "desc");
+        if (volumeTieBreak !== 0) return volumeTieBreak;
+
         const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
         if (pairTieBreak !== 0) return pairTieBreak;
 
@@ -1333,6 +1405,9 @@ export default function DashboardClient({
       const scoreDelta = compareNumbers(left.score, right.score, fullListSignalSortDirection);
       if (scoreDelta !== 0) return scoreDelta;
 
+      const volumeTieBreak = compareNumbers(left.volume24h ?? 0, right.volume24h ?? 0, "desc");
+      if (volumeTieBreak !== 0) return volumeTieBreak;
+
       const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
       if (pairTieBreak !== 0) return pairTieBreak;
 
@@ -1342,11 +1417,14 @@ export default function DashboardClient({
 
   const selectedListItem = useMemo(() => {
     return (
+      fullList.find((item) => item.pair === selectedSymbol) ??
+      topBuys.find((item) => item.pair === selectedSymbol) ??
       topBuys.find((item) => item.symbol === selectedSymbol) ??
+      (markets?.items ?? dashboard?.allStage1Markets ?? []).find((item) => item.pair === selectedSymbol) ??
       (markets?.items ?? dashboard?.allStage1Markets ?? []).find((item) => item.symbol === selectedSymbol) ??
       null
     );
-  }, [dashboard, topBuys, markets, selectedSymbol]);
+  }, [dashboard, fullList, topBuys, markets, selectedSymbol]);
 
 
   useEffect(() => {
@@ -1381,11 +1459,11 @@ export default function DashboardClient({
         setCacheStatusText(dashboardResponse.warming ? "обновляется" : null);
 
         const nextSymbol =
-          dashboardResponse.topBuys[0]?.symbol ??
-          marketsResponse.items.find((item) => item.symbol === "BTC")?.symbol ??
-          marketsResponse.items[0]?.symbol ??
+          dashboardResponse.topBuys[0]?.pair ??
+          marketsResponse.items.find((item) => item.pair === "BTC/USDT")?.pair ??
+          marketsResponse.items[0]?.pair ??
           initialSelectedSymbol ??
-          "BTC";
+          "BTC/USDT";
 
         setSelectedSymbolSeed(nextSymbol);
         setSelectedSymbol(nextSymbol);
@@ -1437,11 +1515,11 @@ export default function DashboardClient({
       );
 
       const nextSymbol =
-        dashboardResponse.topBuys[0]?.symbol ??
+        dashboardResponse.topBuys[0]?.pair ??
         selectedSymbol ??
-        marketsResponse.items.find((item) => item.symbol === "BTC")?.symbol ??
-        marketsResponse.items[0]?.symbol ??
-        "BTC";
+        marketsResponse.items.find((item) => item.pair === "BTC/USDT")?.pair ??
+        marketsResponse.items[0]?.pair ??
+        "BTC/USDT";
 
       setSelectedSymbolSeed(nextSymbol);
       setSelectedSymbol(nextSymbol);
@@ -1716,10 +1794,10 @@ export default function DashboardClient({
               {fullList.map((item) => (
                 <button
                   type="button"
-                  key={item.symbol}
-                  className={item.symbol === selectedSymbol ? "market-row active" : "market-row"}
+                  key={item.pair}
+                  className={item.pair === selectedSymbol ? "market-row active" : "market-row"}
                   onClick={() => {
-                    setSelectedSymbol(item.symbol);
+                    setSelectedSymbol(item.pair);
                   }}
                 >
                   <div className="market-row-left">

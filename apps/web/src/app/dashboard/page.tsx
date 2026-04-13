@@ -18,7 +18,7 @@ export default async function DashboardPage() {
         dashboardError={null}
         initialMarkets={null}
         marketsError={null}
-        initialSelectedSymbol="BTC"
+        initialSelectedSymbol="BTC/USDT"
         initialDetail={null}
         detailError={null}
       />
@@ -31,10 +31,10 @@ export default async function DashboardPage() {
   ]);
 
   const initialSelectedSymbol =
-    dashboardResult.data?.topBuys[0]?.symbol ??
-    marketsResult.data?.items.find((item) => item.symbol === "BTC")?.symbol ??
-    marketsResult.data?.items[0]?.symbol ??
-    "BTC";
+    dashboardResult.data?.topBuys[0]?.pair ??
+    marketsResult.data?.items.find((item) => item.pair === "BTC/USDT")?.pair ??
+    marketsResult.data?.items[0]?.pair ??
+    "BTC/USDT";
 
   const detailResult = await safeGetMarketDetail(initialSelectedSymbol);
 
