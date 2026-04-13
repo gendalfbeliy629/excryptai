@@ -43,6 +43,14 @@ type IndicatorKey =
 type BuyMode = "soft" | "hard";
 type FullListSortDirection = "desc" | "asc";
 type FullListSortField = "signal" | "pair" | "volume" | "price";
+
+type FullListSortState = {
+  field: FullListSortField;
+  pairDirection: FullListSortDirection;
+  volumeDirection: FullListSortDirection;
+  signalDirection: FullListSortDirection;
+  priceDirection: FullListSortDirection;
+};
 type ChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D" | "1W" | "1M";
 type ChartWindow = "1D" | "1W" | "1M" | "1Y" | "All";
 type FetchableChartInterval = "1m" | "5m" | "15m" | "30m" | "1H" | "4H" | "1D";
@@ -1164,11 +1172,13 @@ export default function DashboardClient({
     "Проверяем прогрев кеша BUY-сигналов и ждём первые данные."
   );
   const [indicatorsOpen, setIndicatorsOpen] = useState(false);
-  const [fullListSortField, setFullListSortField] = useState<FullListSortField>("signal");
-  const [fullListSignalSortDirection, setFullListSignalSortDirection] = useState<FullListSortDirection>("desc");
-  const [fullListPairSortDirection, setFullListPairSortDirection] = useState<FullListSortDirection>("asc");
-  const [fullListVolumeSortDirection, setFullListVolumeSortDirection] = useState<FullListSortDirection>("desc");
-  const [fullListPriceSortDirection, setFullListPriceSortDirection] = useState<FullListSortDirection>("desc");
+  const [fullListSort, setFullListSort] = useState<FullListSortState>({
+    field: "signal",
+    signalDirection: "desc",
+    pairDirection: "asc",
+    volumeDirection: "desc",
+    priceDirection: "desc"
+  });
   const [fullListSearchQuery, setFullListSearchQuery] = useState("");
   const [showStage1Only, setShowStage1Only] = useState(false);
   const [showStage2Only, setShowStage2Only] = useState(false);
@@ -1194,6 +1204,49 @@ export default function DashboardClient({
   });
 
   const topBuys = dashboard?.topBuys ?? [];
+
+  const fullListSortField = fullListSort.field;
+  const fullListPairSortDirection = fullListSort.pairDirection;
+  const fullListVolumeSortDirection = fullListSort.volumeDirection;
+  const fullListSignalSortDirection = fullListSort.signalDirection;
+  const fullListPriceSortDirection = fullListSort.priceDirection;
+
+  function handleFullListSortClick(field: FullListSortField) {
+    setFullListSort((current) => {
+      if (current.field !== field) {
+        return {
+          ...current,
+          field
+        };
+      }
+
+      if (field === "pair") {
+        return {
+          ...current,
+          pairDirection: current.pairDirection === "asc" ? "desc" : "asc"
+        };
+      }
+
+      if (field === "volume") {
+        return {
+          ...current,
+          volumeDirection: current.volumeDirection === "desc" ? "asc" : "desc"
+        };
+      }
+
+      if (field === "price") {
+        return {
+          ...current,
+          priceDirection: current.priceDirection === "desc" ? "asc" : "desc"
+        };
+      }
+
+      return {
+        ...current,
+        signalDirection: current.signalDirection === "desc" ? "asc" : "desc"
+      };
+    });
+  }
 
   const fullList = useMemo(() => {
     const searchQuery = fullListSearchQuery.trim().toLocaleLowerCase("ru");
@@ -1242,7 +1295,10 @@ export default function DashboardClient({
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
 
-        return right.score - left.score;
+        const scoreTieBreak = compareNumbers(left.score, right.score, "desc");
+        if (scoreTieBreak !== 0) return scoreTieBreak;
+
+        return compareStrings(left.symbol, right.symbol, "asc");
       }
 
       if (fullListSortField === "volume") {
@@ -1252,7 +1308,10 @@ export default function DashboardClient({
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
 
-        return compareStrings(left.pair, right.pair, "asc");
+        const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
+        if (pairTieBreak !== 0) return pairTieBreak;
+
+        return compareStrings(left.symbol, right.symbol, "asc");
       }
 
       if (fullListSortField === "price") {
@@ -1262,7 +1321,10 @@ export default function DashboardClient({
         const signalTieBreak = signalPriority(right.signal) - signalPriority(left.signal);
         if (signalTieBreak !== 0) return signalTieBreak;
 
-        return compareStrings(left.pair, right.pair, "asc");
+        const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
+        if (pairTieBreak !== 0) return pairTieBreak;
+
+        return compareStrings(left.symbol, right.symbol, "asc");
       }
 
       const signalDelta = compareNumbers(signalPriority(left.signal), signalPriority(right.signal), fullListSignalSortDirection);
@@ -1271,7 +1333,10 @@ export default function DashboardClient({
       const scoreDelta = compareNumbers(left.score, right.score, fullListSignalSortDirection);
       if (scoreDelta !== 0) return scoreDelta;
 
-      return compareStrings(left.pair, right.pair, "asc");
+      const pairTieBreak = compareStrings(left.pair, right.pair, "asc");
+      if (pairTieBreak !== 0) return pairTieBreak;
+
+      return compareStrings(left.symbol, right.symbol, "asc");
     });
   }, [dashboard, fullListPairSortDirection, fullListPriceSortDirection, fullListSearchQuery, fullListSignalSortDirection, fullListSortField, fullListVolumeSortDirection, markets, showStage1Only, showStage2Only]);
 
@@ -1584,10 +1649,7 @@ export default function DashboardClient({
                   className={fullListSortField === "pair" ? "full-list-sort-button active" : "full-list-sort-button"}
                   aria-label={`Сортировка по названию пары: ${fullListPairSortDirection === "asc" ? "от А до Я" : "от Я до А"}`}
                   title={`Сортировка по названию пары: ${fullListPairSortDirection === "asc" ? "от А до Я" : "от Я до А"}`}
-                  onClick={() => {
-                    setFullListSortField("pair");
-                    setFullListPairSortDirection((current) => (current === "asc" ? "desc" : "asc"));
-                  }}
+                  onClick={() => handleFullListSortClick("pair")}
                 >
                   <span className="full-list-sort-label">Пара</span>
                   <span className="full-list-sort-arrows" aria-hidden="true">
@@ -1601,10 +1663,7 @@ export default function DashboardClient({
                   className={fullListSortField === "volume" ? "full-list-sort-button active" : "full-list-sort-button"}
                   aria-label={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
                   title={`Сортировка по объему: ${fullListVolumeSortDirection === "desc" ? "большие сверху" : "большие снизу"}`}
-                  onClick={() => {
-                    setFullListSortField("volume");
-                    setFullListVolumeSortDirection((current) => (current === "desc" ? "asc" : "desc"));
-                  }}
+                  onClick={() => handleFullListSortClick("volume")}
                 >
                   <span className="full-list-sort-label">Объем</span>
                   <span className="full-list-sort-arrows" aria-hidden="true">
@@ -1618,10 +1677,7 @@ export default function DashboardClient({
                   className={fullListSortField === "signal" ? "full-list-sort-button active" : "full-list-sort-button"}
                   aria-label={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
                   title={`Сортировка по сигналу: ${fullListSignalSortDirection === "desc" ? "сильные сверху" : "сильные снизу"}`}
-                  onClick={() => {
-                    setFullListSortField("signal");
-                    setFullListSignalSortDirection((current) => (current === "desc" ? "asc" : "desc"));
-                  }}
+                  onClick={() => handleFullListSortClick("signal")}
                 >
                   <span className="full-list-sort-label">Сигнал</span>
                   <span className="full-list-sort-arrows" aria-hidden="true">
@@ -1635,10 +1691,7 @@ export default function DashboardClient({
                   className={fullListSortField === "price" ? "full-list-sort-button active" : "full-list-sort-button"}
                   aria-label={`Сортировка по цене: ${fullListPriceSortDirection === "desc" ? "дорогие сверху" : "дешевые сверху"}`}
                   title={`Сортировка по цене: ${fullListPriceSortDirection === "desc" ? "дорогие сверху" : "дешевые сверху"}`}
-                  onClick={() => {
-                    setFullListSortField("price");
-                    setFullListPriceSortDirection((current) => (current === "desc" ? "asc" : "desc"));
-                  }}
+                  onClick={() => handleFullListSortClick("price")}
                 >
                   <span className="full-list-sort-label">Цена</span>
                   <span className="full-list-sort-arrows" aria-hidden="true">
