@@ -388,16 +388,17 @@ button {
 }
 
 .full-list-title-group {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .full-list-title-group h3 {
   margin: 0;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .full-list-title-group .muted {
@@ -664,6 +665,58 @@ button {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.parameter-button {
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  border: 1px solid #233244;
+}
+
+.parameter-button:hover {
+  background: #1a2536;
+  border-color: #3a5068;
+}
+
+.parameter-button.active-indicator-tradePlan {
+  border-color: #4da3ff;
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.parameter-button.active-indicator-supports {
+  border-color: #00c087;
+  background: rgba(0, 192, 135, 0.1);
+}
+
+.parameter-button.active-indicator-entry {
+  border-color: #4da3ff;
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.parameter-button.active-indicator-stopLoss {
+  border-color: #ff5b5b;
+  background: rgba(255, 91, 91, 0.1);
+}
+
+.parameter-button.active-indicator-breakEven {
+  border-color: #7ee787;
+  background: rgba(126, 231, 135, 0.1);
+}
+
+.parameter-button.active-indicator-support {
+  border-color: #00c087;
+  background: rgba(0, 192, 135, 0.1);
+}
+
+.parameter-button.active-indicator-resistance {
+  border-color: #ff5b5b;
+  background: rgba(255, 91, 91, 0.1);
+}
+
+.parameter-button.active-indicator-tp {
+  border-color: #f0b24a;
+  background: rgba(240, 178, 74, 0.1);
 }
 
 .parameter-row span {

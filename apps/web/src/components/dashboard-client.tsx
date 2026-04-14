@@ -36,9 +36,15 @@ type IndicatorKey =
   | "rsi"
   | "macd"
   | "range"
-  | "supports"
-  | "tradePlan"
-  | "confirmation";
+  | "entry"
+  | "stopLoss"
+  | "breakEven"
+  | "support"
+  | "resistance1"
+  | "resistance2"
+  | "tp1"
+  | "tp2"
+  | "tp3";
 
 type BuyMode = "soft" | "hard";
 type FullListSortDirection = "desc" | "asc";
@@ -101,10 +107,7 @@ const INDICATORS: Array<{ key: IndicatorKey; label: string }> = [
   { key: "ema50", label: "EMA 50" },
   { key: "rsi", label: "RSI 14" },
   { key: "macd", label: "MACD" },
-  { key: "range", label: "High / Low 30d" },
-  { key: "supports", label: "Support / Resistance" },
-  { key: "tradePlan", label: "Entry / TP / SL" },
-  { key: "confirmation", label: "1H confirmation" }
+  { key: "range", label: "High / Low 30d" }
 ];
 
 function signalPriority(signal: "BUY" | "HOLD" | "SELL"): number {
@@ -201,7 +204,7 @@ function buildSummaryLines(detail: MarketDetail | null, dashboard: DashboardData
       ? `Подтверждение входа: ${signal.entryConfirmationText}`
       : null,
     signal.entryZoneLow !== null && signal.entryZoneHigh !== null
-      ? `Зона входа: ${formatPrice(signal.entryZoneLow)} - ${formatPrice(signal.entryZoneHigh)}`
+      ? `Зона входа: ${formatPrice(signal.entryZoneHigh)} - ${formatPrice(signal.entryZoneLow)}`
       : null,
     signal.breakEvenActivationPrice !== null
       ? `Перевод в безубыток после: ${formatPrice(signal.breakEvenActivationPrice)}`
@@ -241,7 +244,7 @@ function buildManagementLines(
       ? `Действовать только после подтверждения: ${detail.signal.entryConfirmationText}.`
       : null,
     detail.signal.entryZoneLow !== null && detail.signal.entryZoneHigh !== null
-      ? `Рабочая зона набора позиции: ${formatPrice(detail.signal.entryZoneLow)} - ${formatPrice(detail.signal.entryZoneHigh)}.`
+      ? `Рабочая зона набора позиции: ${formatPrice(detail.signal.entryZoneHigh)} - ${formatPrice(detail.signal.entryZoneLow)}.`
       : null,
     detail.signal.invalidationLevel !== null
       ? `Сценарий отменяется ниже ${formatPrice(detail.signal.invalidationLevel)}.`
@@ -501,7 +504,7 @@ function getWindowCount(interval: ChartInterval, windowValue: ChartWindow): numb
   return 120;
 }
 
-function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSymbol: string) {
+function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSymbol: string, autoRefresh = false) {
   const [selectedSymbol, setSelectedSymbol] = useState(initialSelectedSymbol);
   const [detail, setDetail] = useState<MarketDetail | null>(initialDetail);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -544,14 +547,14 @@ function useSelectedMarket(initialDetail: MarketDetail | null, initialSelectedSy
   }, [initialDetail, initialSelectedSymbol, selectedSymbol]);
 
   useEffect(() => {
-    if (!selectedSymbol) return;
+    if (!selectedSymbol || !autoRefresh) return;
 
     const timerId = window.setInterval(() => {
       void loadDetail(selectedSymbol);
     }, 60_000);
 
     return () => window.clearInterval(timerId);
-  }, [selectedSymbol]);
+  }, [selectedSymbol, autoRefresh]);
 
   return {
     selectedSymbol,
@@ -783,13 +786,13 @@ function TradingChart({
   const overlayLevels = [
     activeIndicators.range ? detail?.signal.low30d : null,
     activeIndicators.range ? detail?.signal.high30d : null,
-    activeIndicators.supports ? detail?.signal.nearestSupport : null,
-    activeIndicators.supports ? detail?.signal.nearestResistance : null,
-    activeIndicators.tradePlan ? detail?.signal.entryZoneLow : null,
-    activeIndicators.tradePlan ? detail?.signal.entryZoneHigh : null,
-    activeIndicators.tradePlan ? detail?.signal.protectiveStop : null,
-    activeIndicators.tradePlan ? detail?.signal.breakEvenActivationPrice : null,
-    activeIndicators.confirmation ? detail?.signal.confirmationLevel : null
+    activeIndicators.support ? detail?.signal.nearestSupport : null,
+    activeIndicators.resistance1 ? detail?.signal.nearestResistance : null,
+    activeIndicators.resistance2 ? detail?.signal.nextResistance : null,
+    activeIndicators.entry ? detail?.signal.entryZoneHigh : null,
+    activeIndicators.entry ? detail?.signal.entryZoneHigh : null,
+    activeIndicators.stopLoss ? detail?.signal.protectiveStop : null,
+    activeIndicators.breakEven ? detail?.signal.breakEvenActivationPrice : null
   ].filter((value): value is number => value !== null && Number.isFinite(value));
 
   const minPrice = Math.min(...candles.map((item) => item.low), ...overlayLevels) * 0.992;
@@ -1019,6 +1022,19 @@ function TradingChart({
             );
           })}
 
+          {activeIndicators.entry && detail && detail.signal.entryZoneHigh !== null ? (() => {
+            const entryPrice = detail.signal.entryZoneHigh;
+            const entryY = lineY(entryPrice, minPrice, maxPrice, top, priceHeight);
+            return (
+              <g key="price-entry">
+                <line x1={left} y1={entryY} x2={width - right} y2={entryY} className="tv-grid" />
+                <text x={width - right + 8} y={entryY + 4} className="tv-axis-label">
+                  {formatPrice(entryPrice)}
+                </text>
+              </g>
+            );
+          })() : null}
+
           {bottomAxisTicks.map((tickIndex) => {
             const tickX = x(tickIndex);
             const candle = candles[tickIndex];
@@ -1077,25 +1093,29 @@ function TradingChart({
             </>
           ) : null}
 
-          {activeIndicators.supports ? (
-            <>
-              {renderHorizontalLevel(detail?.signal.nearestSupport ?? null, "Support", "tv-level tv-level-support")}
-              {renderHorizontalLevel(detail?.signal.nearestResistance ?? null, "Resistance", "tv-level tv-level-resistance")}
-            </>
+          {activeIndicators.support ? (
+            renderHorizontalLevel(detail?.signal.nearestSupport ?? null, "Support", "tv-level tv-level-support")
           ) : null}
 
-          {activeIndicators.tradePlan ? (
-            <>
-              {renderHorizontalLevel(detail?.signal.entryZoneLow ?? null, "Entry low", "tv-level tv-level-entry")}
-              {renderHorizontalLevel(detail?.signal.entryZoneHigh ?? null, "Entry high", "tv-level tv-level-entry")}
-              {renderHorizontalLevel(detail?.signal.protectiveStop ?? null, "Stop", "tv-level tv-level-stop")}
-              {renderHorizontalLevel(detail?.signal.breakEvenActivationPrice ?? null, "BE", "tv-level tv-level-be")}
-            </>
+          {activeIndicators.resistance1 ? (
+            renderHorizontalLevel(detail?.signal.nearestResistance ?? null, "Resistance", "tv-level tv-level-resistance")
           ) : null}
 
-          {activeIndicators.confirmation
-            ? renderHorizontalLevel(detail?.signal.confirmationLevel ?? null, "Confirm", "tv-level tv-level-confirm")
-            : null}
+          {activeIndicators.resistance2 ? (
+            renderHorizontalLevel(detail?.signal.nextResistance ?? null, "Resistance 2", "tv-level tv-level-resistance")
+          ) : null}
+
+          {activeIndicators.entry ? (
+            renderHorizontalLevel(detail?.signal.entryZoneHigh ?? null, "Entry", "tv-level tv-level-entry")
+          ) : null}
+
+          {activeIndicators.stopLoss ? (
+            renderHorizontalLevel(detail?.signal.protectiveStop ?? null, "Stop", "tv-level tv-level-stop")
+          ) : null}
+
+          {activeIndicators.breakEven ? (
+            renderHorizontalLevel(detail?.signal.breakEvenActivationPrice ?? null, "BE", "tv-level tv-level-be")
+          ) : null}
 
           {candles.map((candle, index) => {
             const volume = candle.volume ?? candle.volumeFrom ?? 0;
@@ -1157,23 +1177,27 @@ function TradingChart({
             </>
           ) : null}
 
-          <line x1={x(hoveredIndex)} y1={top} x2={x(hoveredIndex)} y2={chartBottom} className="tv-crosshair" />
+          {hoverIndex !== null ? (
+            <>
+              <line x1={x(hoveredIndex)} y1={top} x2={x(hoveredIndex)} y2={chartBottom} className="tv-crosshair" />
 
-          <line x1={left} y1={hoveredPriceY} x2={width - right} y2={hoveredPriceY} className="tv-crosshair" />
+              <line x1={left} y1={hoveredPriceY} x2={width - right} y2={hoveredPriceY} className="tv-crosshair" />
 
-          <g className="tv-axis-box-group">
-            <rect x={width - right + 6} y={hoveredPriceY - 11} width={74} height={22} rx={6} className="tv-axis-box" />
-            <text x={width - right + 43} y={hoveredPriceY + 4} textAnchor="middle" className="tv-axis-box-text">
-              {formatPrice(hoveredCandle.close)}
-            </text>
-          </g>
+              <g className="tv-axis-box-group">
+                <rect x={width - right + 6} y={hoveredPriceY - 11} width={74} height={22} rx={6} className="tv-axis-box" />
+                <text x={width - right + 43} y={hoveredPriceY + 4} textAnchor="middle" className="tv-axis-box-text">
+                  {formatPrice(candles[hoveredIndex].close)}
+                </text>
+              </g>
 
-          <g className="tv-axis-box-group">
-            <rect x={Math.max(left, Math.min(width - right - 118, x(hoveredIndex) - 59))} y={chartBottom + 6} width={118} height={22} rx={6} className="tv-axis-box" />
-            <text x={Math.max(left + 59, Math.min(width - right - 59, x(hoveredIndex)))} y={chartBottom + 21} textAnchor="middle" className="tv-axis-box-text">
-              {formatAxisTime(hoveredCandle.time, effectiveInterval)}
-            </text>
-          </g>
+              <g className="tv-axis-box-group">
+                <rect x={Math.max(left, Math.min(width - right - 118, x(hoveredIndex) - 59))} y={chartBottom + 6} width={118} height={22} rx={6} className="tv-axis-box" />
+                <text x={Math.max(left + 59, Math.min(width - right - 59, x(hoveredIndex)))} y={chartBottom + 21} textAnchor="middle" className="tv-axis-box-text">
+                  {formatAxisTime(candles[hoveredIndex].time, effectiveInterval)}
+                </text>
+              </g>
+            </>
+          ) : null}
         </svg>
       </div>
 
@@ -1231,7 +1255,7 @@ export default function DashboardClient({
     detailLoading,
     detailError,
     reloadDetail
-  } = useSelectedMarket(detailSeed, selectedSymbolSeed);
+  } = useSelectedMarket(detailSeed, selectedSymbolSeed, false);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -1282,9 +1306,15 @@ export default function DashboardClient({
     rsi: false,
     macd: false,
     range: false,
-    supports: false,
-    tradePlan: false,
-    confirmation: false
+    entry: false,
+    stopLoss: false,
+    breakEven: false,
+    support: false,
+    resistance1: false,
+    resistance2: false,
+    tp1: false,
+    tp2: false,
+    tp3: false
   });
 
   const topBuys = dashboard?.topBuys ?? [];
@@ -1312,7 +1342,7 @@ export default function DashboardClient({
           title: input.title,
           severity,
           createdAt,
-          visibleUntil: createdAt + 60_000
+          visibleUntil: createdAt + 5_000
         };
         return next.sort((a, b) => b.createdAt - a.createdAt);
       }
@@ -1324,7 +1354,7 @@ export default function DashboardClient({
           message: input.message,
           severity,
           createdAt,
-          visibleUntil: createdAt + 60_000,
+          visibleUntil: createdAt + 5_000,
           seenInPanel: false,
           sourceKey
         },
@@ -1860,8 +1890,8 @@ export default function DashboardClient({
 
               <div className="list-title-row full-list-title-row">
                 <div className="full-list-title-group">
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}><h3>Полный список</h3>{cacheStatusText ? <span className="muted" style={{ fontSize: 11 }}>• {cacheStatusText}</span> : null}</div>
-                  <span className="muted">{fullList.length} пар</span>
+                  <h3>Полный список</h3>
+                  <span className="muted">{fullList.length}</span>
                 </div>
               </div>
 
@@ -2069,88 +2099,178 @@ export default function DashboardClient({
                   </>
                 ) : infoTab === "parameters" && detail ? (
                   <div className="parameters-grid">
-                    <div className="parameter-row">
+                    <button
+                      type="button"
+                      className={activeIndicators.entry ? "parameter-row parameter-button active-indicator-entry" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          entry: !current.entry
+                        }))
+                      }
+                    >
                       <span>Вход</span>
                       <strong>
-                        {detail.signal.entryZoneLow !== null && detail.signal.entryZoneHigh !== null
-                          ? `${formatPrice(detail.signal.entryZoneLow)} - ${formatPrice(detail.signal.entryZoneHigh)}`
+                        {detail.signal.entryZoneHigh !== null
+                          ? formatPrice(detail.signal.entryZoneHigh)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className={activeIndicators.stopLoss ? "parameter-row parameter-button active-indicator-stopLoss" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          stopLoss: !current.stopLoss
+                        }))
+                      }
+                    >
                       <span>Стоп лосс</span>
                       <strong>
                         {detail.signal.protectiveStop !== null
                           ? formatPrice(detail.signal.protectiveStop)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className={activeIndicators.breakEven ? "parameter-row parameter-button active-indicator-breakEven" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          breakEven: !current.breakEven
+                        }))
+                      }
+                    >
                       <span>Безубыток</span>
                       <strong>
                         {detail.signal.breakEvenActivationPrice !== null
                           ? formatPrice(detail.signal.breakEvenActivationPrice)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className="parameter-row parameter-button"
+                    >
                       <span>ATR 1H</span>
                       <strong>
                         {detail.signal.atr1hPercent !== null
                           ? `${formatNumber(detail.signal.atr1hPercent)}%`
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className={activeIndicators.support ? "parameter-row parameter-button active-indicator-support" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          support: !current.support
+                        }))
+                      }
+                    >
                       <span>Поддержка</span>
                       <strong>
                         {detail.signal.nearestSupport !== null
                           ? formatPrice(detail.signal.nearestSupport)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className={activeIndicators.resistance1 ? "parameter-row parameter-button active-indicator-resistance" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          resistance1: !current.resistance1
+                        }))
+                      }
+                    >
                       <span>Сопр. 1</span>
                       <strong>
                         {detail.signal.nearestResistance !== null
                           ? formatPrice(detail.signal.nearestResistance)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className={activeIndicators.resistance2 ? "parameter-row parameter-button active-indicator-resistance" : "parameter-row parameter-button"}
+                      onClick={() =>
+                        setActiveIndicators((current) => ({
+                          ...current,
+                          resistance2: !current.resistance2
+                        }))
+                      }
+                    >
                       <span>Сопр. 2</span>
                       <strong>
                         {detail.signal.nextResistance !== null
                           ? formatPrice(detail.signal.nextResistance)
                           : "—"}
                       </strong>
-                    </div>
-                    <div className="parameter-row">
+                    </button>
+                    <button
+                      type="button"
+                      className="parameter-row parameter-button"
+                    >
                       <span>Трейлинг</span>
                       <strong>
                         {detail.signal.trailingAtrMultiplier > 0
                           ? `${detail.signal.trailingAtrMultiplier}x ATR`
                           : "—"}
                       </strong>
-                    </div>
+                    </button>
                     {selectedBuyCandidate ? (
                       <>
-                        <div className="parameter-row">
+                        <button
+                          type="button"
+                          className={activeIndicators.tp1 ? "parameter-row parameter-button active-indicator-tp" : "parameter-row parameter-button"}
+                          onClick={() =>
+                            setActiveIndicators((current) => ({
+                              ...current,
+                              tp1: !current.tp1
+                            }))
+                          }
+                        >
                           <span>TP1 / R</span>
                           <strong>{selectedBuyCandidate.riskRewardTp1.toFixed(1)}</strong>
-                        </div>
-                        <div className="parameter-row">
+                        </button>
+                        <button
+                          type="button"
+                          className={activeIndicators.tp2 ? "parameter-row parameter-button active-indicator-tp" : "parameter-row parameter-button"}
+                          onClick={() =>
+                            setActiveIndicators((current) => ({
+                              ...current,
+                              tp2: !current.tp2
+                            }))
+                          }
+                        >
                           <span>TP2 / R</span>
                           <strong>{selectedBuyCandidate.riskRewardTp2.toFixed(1)}</strong>
-                        </div>
-                        <div className="parameter-row">
+                        </button>
+                        <button
+                          type="button"
+                          className={activeIndicators.tp3 ? "parameter-row parameter-button active-indicator-tp" : "parameter-row parameter-button"}
+                          onClick={() =>
+                            setActiveIndicators((current) => ({
+                              ...current,
+                              tp3: !current.tp3
+                            }))
+                          }
+                        >
                           <span>TP3 / R</span>
                           <strong>{selectedBuyCandidate.riskRewardTp3.toFixed(1)}</strong>
-                        </div>
-                        <div className="parameter-row">
+                        </button>
+                        <button
+                          type="button"
+                          className="parameter-row parameter-button"
+                        >
                           <span>Риск</span>
                           <strong>{selectedBuyCandidate.riskPercent.toFixed(1)}%</strong>
-                        </div>
+                        </button>
                       </>
                     ) : null}
                   </div>
