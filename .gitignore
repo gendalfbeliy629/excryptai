@@ -50,3 +50,8 @@ temp/
 # =========================
 .pnpm-store/
 
+
+opencode.json
+.opencode/
+opencode/
+
