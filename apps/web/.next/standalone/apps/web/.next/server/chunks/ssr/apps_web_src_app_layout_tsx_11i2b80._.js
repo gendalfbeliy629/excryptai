@@ -1,3 +1,0 @@
-module.exports=[77930,a=>{"use strict";var b=a.i(40390);a.s(["default",0,function({children:a}){return(0,b.jsx)("html",{lang:"ru",children:(0,b.jsx)("body",{children:(0,b.jsx)("div",{className:"shell",children:(0,b.jsx)("main",{className:"main main-compact",children:a})})})})},"metadata",0,{title:"crypto-ai",description:"Frontend for crypto-ai analytics platform"}])},34005,a=>{a.n(a.i(77930))}];
-
-//# sourceMappingURL=apps_web_src_app_layout_tsx_11i2b80._.js.map

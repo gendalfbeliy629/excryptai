@@ -1,57 +1,90 @@
-# =========================
 # Dependencies
-# =========================
 node_modules/
+**/node_modules/
 
-# =========================
+
 # Build outputs
-# =========================
 dist/
 build/
 
+
 # Next.js
 .next/
+**/.next/
 out/
 
-# =========================
-# Logs
-# =========================
-logs
-*.log
-pnpm-debug.log*
 
-# =========================
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+
 # Env files
-# =========================
 .env
 .env.*
 !.env.example
 .env.local
 .env.production
 
-# =========================
+
 # OS / Editor
-# =========================
 .DS_Store
 Thumbs.db
-
 .vscode/
 .idea/
 
-# =========================
+
 # Cache
-# =========================
 .cache/
 tmp/
 temp/
-
-# =========================
-# Turbo / pnpm cache (если будешь использовать)
-# =========================
+.turbo/
 .pnpm-store/
 
 
+# DOCKER
+docker-data/
+*.pid
+
+
+# OPENCODE
 opencode.json
-.opencode/
-opencode/
+# База данных OpenCode
+.local/share/opencode/
+**/.local/share/opencode/
+
+# Конфиги пользователя (локальные)
+.config/opencode/
+**/.config/opencode/
+
+# Логи OpenCode
+.local/share/opencode/log/
+**/.local/share/opencode/log/
+
+# SQLite файлы
+*.db
+*.db-shm
+*.db-wal
+
+# Экспортированные сессии
+exports/
+**/exports/
+
+
+# AI / TEMP / EXPORTS
+tmp/
+temp/
+*.tmp
+
+
+# RAILWAY / DEPLOY
+.vercel/
+.railway/
+
+
+# OPTIONAL (если используешь)
+uploads/
+public/uploads/
 
