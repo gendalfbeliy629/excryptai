@@ -6,11 +6,16 @@
   "scripts": {
     "dev:api": "pnpm --filter @crypto-ai/api dev",
     "dev:web": "pnpm --filter @crypto-ai/web dev",
+
     "build:api": "pnpm --filter @crypto-ai/api build",
     "build:web": "pnpm --filter @crypto-ai/web build",
     "build": "pnpm -r --if-present build",
+
     "start:api": "pnpm --filter @crypto-ai/api start",
     "start:web": "pnpm --filter @crypto-ai/web start",
+
+    "start": "pnpm -r --parallel --if-present start",
+
     "typecheck": "pnpm -r --if-present typecheck"
   }
 }
